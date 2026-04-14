@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(pip list:*)",
+      "Bash(pip install:*)",
+      "Bash(ls /home/drew/projects/timesheet/python-payroll_data_extract/*.py)",
+      "Bash(ls /home/drew/projects/timesheet/python-payroll_data_extract/*.txt)",
+      "Bash(ls /home/drew/projects/timesheet/python-payroll_data_extract/*.cfg)",
+      "Bash(pip3 install:*)",
+      "Bash(ln -s CLAUDE.md /home/drew/projects/timesheet/AGENTS.md)",
+      "Bash(ls venv/)",
+      "Bash(python3 -c \"import pdfplumber; print\\('pdfplumber ok'\\)\")",
+      "Bash(mkdir -p /home/drew/projects/timesheet/payroll_app/database/migrations)",
+      "Bash(mkdir -p /home/drew/projects/timesheet/payroll_app/extractors)",
+      "Bash(mkdir -p /home/drew/projects/timesheet/payroll_app/pipeline)",
+      "Bash(mkdir -p /home/drew/projects/timesheet/payroll_app/pages)",
+      "Bash(mkdir -p /home/drew/projects/timesheet/payroll_app/tests/fixtures)",
+      "Bash(python -m pytest payroll_app/tests/test_importer.py -x -q)"
+    ]
+  }
+}
