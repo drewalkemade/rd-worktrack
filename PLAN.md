@@ -9,7 +9,7 @@ Repo: `C:\Users\RD Controls\Desktop\apps\streamlit\rd-worktrack`
 Backup plan file:
 - `/home/drew/.claude/plans/frolicking-forging-sphinx.md`
 
-**Current phase: Phase 3 — Streamlit UI**
+**Current phase: Phase 3 — Streamlit UI (in progress)**
 
 ### Phase 1 — Complete (2026-04-14)
 
@@ -19,6 +19,11 @@ All Phase 1 deliverables are done and 62/62 tests pass.
 
 All Phase 2 deliverables are done and 178/178 tests pass (5 skipped — non-per-diem receipt
 tests that require fixture timesheets with non-per-diem expenses).
+
+### Phase 3 — In Progress (started 2026-04-14)
+
+app.py, Dashboard, Import, and Weekly Verification pages are built and running.
+Remaining: Reconcile, Expenses, Employees, Reports pages.
 
 Phase 2 deliverables:
 
@@ -1086,28 +1091,39 @@ Verify:
 8. ✓ Design source-document storage and access pattern
 9. ✓ Build fixture-based parser tests (62/62 passing)
 
-### Phase 2 — Core pipeline  ← CURRENT
+### Phase 2 — Core pipeline ✓ DONE (2026-04-14)
 
-1. Build importer
-2. Build weekly verifier
-3. Build reconciler
-4. Build payroll writer
-5. Build expense exporter
-6. Build billing writer — targets rebuilt `.xlsx` (not `.xlsm`, gate failed)
-7. Build receipt ingest/tracking
-8. Build source-document open/view actions
-9. Build controlled timesheet edit workflow with `DrewEdit`-style copies and audit trail
+All Phase 2 deliverables are done and 178/178 tests pass (5 skipped — non-per-diem receipt
+tests that require fixture timesheets with non-per-diem expenses).
 
-### Phase 3 — UI
+1. ✓ Build importer
+2. ✓ Build weekly verifier
+3. ✓ Build reconciler
+4. ✓ Build payroll writer
+5. ✓ Build expense exporter
+6. ✓ Build billing writer — targets rebuilt `.xlsx` (not `.xlsm`, gate failed)
+7. ✓ Build receipt ingest/tracking
+8. ✓ Build source-document open/view actions
+9. ✓ Build controlled timesheet edit workflow with `DrewEdit`-style copies and audit trail
 
-1. Scaffold app
-2. Import page
-3. Weekly verification page
-4. Reconcile page
-5. Expenses page
-6. Dashboard
-7. Employees page
-8. Reports
+### Phase 3 — UI ← CURRENT
+
+Started 2026-04-14. Python virtualenv at `.venv/`. Run with:
+`source .venv/bin/activate && streamlit run payroll_app/app.py`
+
+Progress:
+
+1. ✓ Scaffold app (`payroll_app/app.py`) — DB init, KPI cards, period table, navigation hints
+2. ✓ Import page (`pages/2_Import.py`) — Payroll PDF / Travel PDF / Timesheet tabs with original+normalized filename support, import history, source-file path viewer
+3. ✓ Weekly verification page (`pages/3_Weekly_Verification.py`) — approved vs submitted hours side-by-side, variance flags, expense/Sunday travel indicators, individual + bulk verify with notes
+4. ✓ Dashboard (`pages/1_Dashboard.py`) — per-period approval/verification/reconciliation status, receipt backlog, audit log
+5. Reconcile page (`pages/4_Reconcile.py`)
+6. Expenses page (`pages/5_Expenses.py`)
+7. Employees page (`pages/6_Employees.py`)
+8. Reports page (`pages/7_Reports.py`)
+
+Note: sys.path guard (`_PROJECT_ROOT = Path(__file__).resolve().parent.parent[.parent]`) is
+required in all page files so `payroll_app` is importable when streamlit runs pages as scripts.
 
 ### Phase 4 — Template and operational polish
 

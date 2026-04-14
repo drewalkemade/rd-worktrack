@@ -229,10 +229,30 @@ in `example/` — the system must not assume all PDF employees have submitted ti
 
 - **Phase 1** ✓ DONE — schema, source-file ingestion, workbook validation gate, extractor rewrites, regression tests
 - **Phase 2** ✓ DONE — importer, weekly verifier, reconciler, payroll writer, expense exporter, receipt tracking (178 tests)
-- **Phase 3** ← CURRENT — Streamlit UI, starting with Import and Weekly Verification
+- **Phase 3** ← CURRENT — Streamlit UI (app.py, Dashboard, Import, Weekly Verification pages built and running)
 - **Phase 4** — template improvements, richer reporting, optional lateness/exception hooks, receipt-image polish, audit coverage, multi-customer hooks
 
 The weekly verification workflow is not optional and should not be deferred behind cosmetic UI work.
+
+---
+
+## Agents
+
+### code-reviewer
+
+Use the `code-reviewer` agent when:
+- A new pipeline module or page is complete and ready for a second-opinion review
+- A change touches money-affecting logic (hours, rates, expense amounts, Sage 50 export)
+- A change modifies verification, reconciliation, or override behavior
+- You want to check that a new Streamlit page correctly uses the pipeline API without adding hidden business logic inside the page itself
+
+The reviewer should check:
+- Correctness against the pipeline API (importer, weekly_verifier, reconciler, expense_exporter)
+- That no money-affecting values are silently overwritten
+- That all manual overrides require a note
+- That source files are not mutated (only copied)
+- That employee sort order is never hardcoded
+- That per-diem vs non-per-diem expense handling is respected
 
 ---
 

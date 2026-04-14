@@ -16,7 +16,13 @@
       "Bash(mkdir -p /home/drew/projects/timesheet/payroll_app/pipeline)",
       "Bash(mkdir -p /home/drew/projects/timesheet/payroll_app/pages)",
       "Bash(mkdir -p /home/drew/projects/timesheet/payroll_app/tests/fixtures)",
-      "Bash(python -m pytest payroll_app/tests/test_importer.py -x -q)"
+      "Bash(python -m pytest payroll_app/tests/test_importer.py -x -q)",
+      "Bash(python -m pytest payroll_app/tests/ -q --tb=short)",
+      "Bash(python3.12 -m pytest payroll_app/tests/ -q --tb=short)",
+      "Bash(ls:*)",
+      "Bash(wc -l /mnt/f/GitHub/rd-worktrack/payroll_app/app.py /mnt/f/GitHub/rd-worktrack/payroll_app/pages/*.py)",
+      "Bash(/mnt/f/GitHub/rd-worktrack/.venv/bin/pip install:*)",
+      "Bash(.venv/bin/pytest payroll_app/tests/ -q --tb=short)"
     ]
   }
 }

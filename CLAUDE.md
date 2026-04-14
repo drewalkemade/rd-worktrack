@@ -229,7 +229,7 @@ in `example/` — the system must not assume all PDF employees have submitted ti
 
 - **Phase 1** ✓ DONE — schema, source-file ingestion, workbook validation gate, extractor rewrites, regression tests
 - **Phase 2** ✓ DONE — importer, weekly verifier, reconciler, payroll writer, expense exporter, receipt tracking (178 tests)
-- **Phase 3** ← CURRENT — Streamlit UI, starting with Import and Weekly Verification
+- **Phase 3** ← CURRENT — Streamlit UI (app.py scaffolded; Dashboard, Import, Weekly Verification pages built and running)
 - **Phase 4** — template improvements, richer reporting, optional lateness/exception hooks, receipt-image polish, audit coverage, multi-customer hooks
 
 The weekly verification workflow is not optional and should not be deferred behind cosmetic UI work.
