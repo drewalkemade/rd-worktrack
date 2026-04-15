@@ -5,24 +5,24 @@
  *   Employee | REG | OT1 | OT2 | Drive | Sick | Vacation | Holiday | Non-Bill
  */
 import { useState, useRef } from 'react'
-import { importTimesheets, getWeek1Hours } from '../api'
+import { importTimesheets, getWeek1Hours, getWeek2Hours, getPeriodExpenses } from '../api'
 
 function fmt(n) {
   if (!n || n === 0) return <span className="zero">—</span>
   return n.toFixed(1)
 }
 
-function HoursTable({ data }) {
-  if (!data || !data.rows.length) return null
+const HOUR_COLS = ['reg', 'ot1', 'ot2', 'drive', 'sick', 'vacation', 'holiday', 'nonbill']
 
-  // Column totals
-  const cols = ['reg', 'ot1', 'ot2', 'drive', 'sick', 'vacation', 'holiday', 'nonbill']
-  const totals = Object.fromEntries(cols.map(c => [c, data.rows.reduce((s, r) => s + (r[c] || 0), 0)]))
+function HoursTable({ label, dateRange, rows }) {
+  if (!rows || !rows.length) return null
+
+  const totals = Object.fromEntries(HOUR_COLS.map(c => [c, rows.reduce((s, r) => s + (r[c] || 0), 0)]))
 
   return (
     <div style={{ marginTop: 16 }}>
       <div className="section-label" style={{ marginTop: 0 }}>
-        Week 1 Hours — {data.week1_start} → {data.week1_ending}
+        {label} — {dateRange}
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table className="output-table">
@@ -40,7 +40,7 @@ function HoursTable({ data }) {
             </tr>
           </thead>
           <tbody>
-            {data.rows.map(r => (
+            {rows.map(r => (
               <tr key={r.employee}>
                 <td>{r.employee}</td>
                 <td>{fmt(r.reg)}</td>
@@ -57,11 +57,80 @@ function HoursTable({ data }) {
           <tfoot>
             <tr>
               <td style={{ color: '#8b949e', fontWeight: 700 }}>Total</td>
-              {cols.map(c => (
+              {HOUR_COLS.map(c => (
                 <td key={c} style={{ fontWeight: 700, color: '#58a6ff' }}>
                   {totals[c] > 0 ? totals[c].toFixed(1) : <span className="zero">—</span>}
                 </td>
               ))}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+const RECEIPT_COLOR = {
+  not_required: '#4b5563',
+  received:     '#166534',
+  missing:      '#7f1d1d',
+}
+
+function ExpenseTable({ label, items }) {
+  if (!items || !items.length) return null
+
+  const cadTotal = items.filter(i => i.currency === 'CAD').reduce((s, i) => s + i.amount, 0)
+  const usdTotal = items.filter(i => i.currency === 'USD').reduce((s, i) => s + i.amount, 0)
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div className="section-label" style={{ marginTop: 0 }}>{label}</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table className="output-table">
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Date</th>
+              <th>Category</th>
+              <th>Description</th>
+              <th style={{ textAlign: 'right' }}>Qty</th>
+              <th style={{ textAlign: 'right' }}>Amount</th>
+              <th>Cur</th>
+              <th>Receipt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((r, i) => (
+              <tr key={i}>
+                <td>{r.employee}</td>
+                <td style={{ color: '#8b949e', whiteSpace: 'nowrap' }}>{r.work_date || '—'}</td>
+                <td style={{ fontSize: 11 }}>{r.category}</td>
+                <td style={{ fontSize: 11, color: '#8b949e' }}>{r.description || '—'}</td>
+                <td style={{ textAlign: 'right' }}>{r.quantity !== 1 ? r.quantity : '—'}</td>
+                <td style={{ textAlign: 'right' }}>{r.amount.toFixed(2)}</td>
+                <td style={{ color: '#8b949e' }}>{r.currency}</td>
+                <td>
+                  <span style={{
+                    fontSize: 10,
+                    padding: '1px 5px',
+                    borderRadius: 3,
+                    background: RECEIPT_COLOR[r.receipt_status] || '#21262d',
+                    color: '#fff',
+                  }}>
+                    {r.requires_receipt ? r.receipt_status : 'n/a'}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={5} style={{ color: '#8b949e', fontWeight: 700 }}>Total</td>
+              <td style={{ textAlign: 'right', fontWeight: 700, color: '#58a6ff' }}>
+                {cadTotal > 0 && <div>CAD {cadTotal.toFixed(2)}</div>}
+                {usdTotal > 0 && <div>USD {usdTotal.toFixed(2)}</div>}
+              </td>
+              <td colSpan={2} />
             </tr>
           </tfoot>
         </table>
@@ -75,6 +144,8 @@ export default function TimesheetsPanel({ periodId, onClose, onImportDone }) {
   const [importing,  setImporting]  = useState(false)
   const [results,    setResults]    = useState(null)  // import API response
   const [week1Data,  setWeek1Data]  = useState(null)  // week1-hours response
+  const [week2Data,  setWeek2Data]  = useState(null)  // week2-hours response
+  const [expenses,   setExpenses]   = useState(null)  // all expense_items for period
   const [dragOver,   setDragOver]   = useState(false)
   const fileInputRef = useRef()
 
@@ -99,6 +170,8 @@ export default function TimesheetsPanel({ periodId, onClose, onImportDone }) {
     setImporting(true)
     setResults(null)
     setWeek1Data(null)
+    setWeek2Data(null)
+    setExpenses(null)
 
     try {
       const fd = new FormData()
@@ -107,15 +180,12 @@ export default function TimesheetsPanel({ periodId, onClose, onImportDone }) {
       const res = await importTimesheets(fd)
       setResults(res)
 
-      // Fetch Week 1 hours
+      // Fetch both weeks
       const pid = res.period_id || periodId
       if (pid) {
-        try {
-          const w1 = await getWeek1Hours(pid)
-          setWeek1Data(w1)
-        } catch {
-          // No week1 data yet — that's ok
-        }
+        try { setWeek1Data(await getWeek1Hours(pid)) } catch { /* no data yet */ }
+        try { setWeek2Data(await getWeek2Hours(pid)) } catch { /* no data yet */ }
+        try { setExpenses(await getPeriodExpenses(pid)) } catch { /* no data yet */ }
       }
 
       onImportDone?.(res.period_id)
@@ -126,10 +196,12 @@ export default function TimesheetsPanel({ periodId, onClose, onImportDone }) {
     }
   }
 
-  // If a period is already selected, load existing week1 data on mount
+  // If a period is already selected, load existing data on mount
   useState(() => {
-    if (periodId && !week1Data) {
+    if (periodId) {
       getWeek1Hours(periodId).then(setWeek1Data).catch(() => {})
+      getWeek2Hours(periodId).then(setWeek2Data).catch(() => {})
+      getPeriodExpenses(periodId).then(setExpenses).catch(() => {})
     }
   })
 
@@ -233,17 +305,45 @@ export default function TimesheetsPanel({ periodId, onClose, onImportDone }) {
           <div className="msg error" style={{ marginTop: 12 }}>✗ {results.error}</div>
         )}
 
-        {/* Week 1 hours output table */}
-        {week1Data && <HoursTable data={week1Data} />}
+        {/* Week 1 — hours then expenses */}
+        {week1Data && (
+          <HoursTable
+            label="Week 1 Hours"
+            dateRange={`${week1Data.week1_start} → ${week1Data.week1_ending}`}
+            rows={week1Data.rows}
+          />
+        )}
+        {expenses && (
+          <ExpenseTable
+            label="Week 1 Expenses"
+            items={expenses.items.filter(i => i.week === 1)}
+          />
+        )}
+
+        {/* Week 2 — hours then expenses */}
+        {week2Data && week2Data.rows.length > 0 && (
+          <HoursTable
+            label="Week 2 Hours"
+            dateRange={`${week2Data.week2_start} → ${week2Data.week2_ending}`}
+            rows={week2Data.rows}
+          />
+        )}
+        {expenses && (
+          <ExpenseTable
+            label="Week 2 Expenses"
+            items={expenses.items.filter(i => i.week === 2)}
+          />
+        )}
 
         {/* Load existing if period selected but no import yet */}
-        {!week1Data && periodId && !results && (
+        {!week1Data && !week2Data && periodId && !results && (
           <div style={{ marginTop: 20, textAlign: 'center' }}>
-            <button className="btn btn-ghost" onClick={() =>
-              getWeek1Hours(periodId).then(setWeek1Data).catch(() =>
-                setWeek1Data(null))
-            }>
-              Load existing Week 1 data
+            <button className="btn btn-ghost" onClick={() => {
+              getWeek1Hours(periodId).then(setWeek1Data).catch(() => {})
+              getWeek2Hours(periodId).then(setWeek2Data).catch(() => {})
+              getPeriodExpenses(periodId).then(setExpenses).catch(() => {})
+            }}>
+              Load existing data
             </button>
           </div>
         )}

@@ -104,11 +104,30 @@ body {
 
 /* ── Side panel ─────────────────────────────────────── */
 .side-panel {
-  width: 560px; flex-shrink: 0;
+  /* width is controlled by panelWidth state in App.jsx via inline style */
+  flex-shrink: 0;
+  position: relative;
   background: #161b22;
   border-left: 1px solid #30363d;
   display: flex; flex-direction: column; overflow: hidden;
 }
+.resize-handle {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.resize-handle:hover, .resize-handle.dragging {
+  background: rgba(88,166,255,0.25);
+}
+
+/* Verification table column group shading */
+.col-approved    { background: rgba(30,58,95,0.25); }
+.col-timesheet   { background: rgba(22,101,52,0.18); }
+.col-variance    { background: rgba(120,53,15,0.2); }
+.col-group-start { border-left: 1px solid #374151 !important; }
 .panel-header {
   padding: 14px 20px 12px;
   border-bottom: 1px solid #30363d;

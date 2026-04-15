@@ -4,7 +4,7 @@
 
 This file is the active source of truth for the project.
 
-Repo: `C:\Users\RD Controls\Desktop\apps\streamlit\rd-worktrack`
+Repo: `F:\GitHub\rd-worktrack` (WSL: `/mnt/f/GitHub/rd-worktrack`)
 
 Backup plan file:
 - `/home/drew/.claude/plans/frolicking-forging-sphinx.md`
@@ -66,31 +66,47 @@ Phase 3 notes:
 
 ### Phase 4 — Current (started 2026-04-15)
 
-Phase 4 scope:
-- [x] Workboard page: n8n-style single-page-per-pay-period linear node flow — `pages/0_Workboard.py`; replaces all 7 prior pages (archived with `_` prefix)
-  - Billing flow: employees → approved hours → travel → invoice values
-  - Payroll flow: week1 approved → week1 travel → week2 approved → week2 travel → timesheet → Sage 50 CSV → manual checklist
-  - Each node expands inline to show imported data in a table (columns match payroll_export / timesheet_export CSV layout)
-  - Owner does visual check in the table before advancing to next node
-- [x] Workboard page (`pages/0_Workboard.py`) — dark n8n-style canvas with 20 nodes, bezier connections, status badges; all 7 prior pages archived (`_` prefix); all detail panels wired to pipeline (import, verify, reconcile, invoice, export)
-- [x] Matina Rahbar Ranji — sage50_name alias added to seed data (all three name-variant employees now complete: Yousof, Florin, Matina)
-- [ ] Employees node: replace expander/form with `st.data_editor` grids (roster + alias table)
-- [ ] Verification tab: consolidated Time Log-style view (submitted + approved + final side by side)
-- [ ] Receipt image display polish
-- [ ] Audit log coverage improvements
-- [ ] Timesheet template rework (new "for accounting" section, verification macros) — deferred to later phase
-- [ ] Multi-customer hooks (foundation only)
+**Architecture pivot:** Streamlit was too laggy and node connections did not render correctly. Migrated to **React + FastAPI**.
 
-Phase 4 notes:
-- Workboard uses `st.session_state` for node selection (no URL navigation) — file upload state is preserved across node switches
-- Canvas is rendered as HTML/SVG inside `st.components.v1.html()` — dark background, dot grid, node status badges update from DB each rerun
-- Node selector is a styled `st.selectbox` below the canvas; selected node is highlighted in purple on the canvas
-- All 20 nodes have wired detail panels; DrewEdit XLSX export is a placeholder (Phase 5)
-- To run: `streamlit run payroll_app/app.py` from the project root (with `.venv` active)
+- Streamlit archived: `app.py` + all 7 pages prefixed with `_` (hidden from Streamlit sidebar)
+- FastAPI backend: `payroll_app/api/main.py` (port 8000) — wraps existing pipeline modules
+- React frontend: `payroll_app/frontend/` (Vite + React Flow, port 5173)
+
+**To run:**
+```bash
+# Terminal 1 — backend
+source .venv/bin/activate
+uvicorn payroll_app.api.main:app --reload --port 8000
+
+# Terminal 2 — frontend
+cd payroll_app/frontend && npm run dev
+```
+
+Phase 4 completed:
+- [x] FastAPI backend (`api/main.py`) — employees CRUD + aliases, periods, node-states, timesheet import, week1/2-hours, expenses, payroll PDF import, travel PDF import, weekly verification, set-verified
+- [x] React canvas (`canvas.jsx`) — 20 nodes, 22 smoothstep edges, state-driven colors, MiniMap, Controls, node dragging, position preserved across panel opens
+- [x] `WorkboardNode.jsx` — colored header, badge, state icon, ▶ Open button, React Flow Handles; supports multiple named output handles (e.g. Timesheets → Wk 1 / Wk 2)
+- [x] `EmployeesPanel.jsx` — inline-edit grid (display_name, pdf_name, pdf_id, centerline_id, type, active), expandable alias sub-row with add/delete
+- [x] `TimesheetsPanel.jsx` — drag-and-drop XLSX upload, staged file list, import → Week 1 + Week 2 hours tables + Week 1 + Week 2 expense tables (category, currency, receipt status)
+- [x] `ApprovedHoursPanel.jsx` — payroll PDF drop + auto-import, travel PDF drop + auto-import, Run Verification button, verification table with Approved / Timesheet / Variance column groups (colour-coded), per-row ✓ Verify; `needs_review` rows require a note before verification; note persists under employee name; wired to w{n}_payroll_pdf, w{n}_travel_pdf, w{n}_approved_hours nodes for both weeks
+- [x] Resizable side panel — drag left edge to resize (380px–1400px); width persists while panel is open
+- [x] Vite polling watcher — `usePolling: true` in vite.config.js for WSL /mnt/f/ file watching
+- [x] Matina Rahbar Ranji — sage50_name alias added to seed data
+
+Phase 4 remaining:
+- [ ] Reconcile node — run reconciliation, variance table, approve per employee
+- [ ] Invoice / Invoice Export nodes — invoice line items, CSV export
+- [ ] Receipts node — receipt upload, link to expense items, receipt backlog
+- [ ] Merge + export nodes — Sage 50 CSV, Summary CSV, DrewEdit XLSX
+- [ ] Timesheet template rework — deferred to later phase
+- [ ] Multi-customer hooks — deferred
 
 Phase 4 open items resolved:
 - Matina Rahbar's Sage 50 name: "Matina Rahbar Ranji" ✓
 - CSV import question: payroll_export_*.csv / timesheet_export_*.csv are display-format reference only — NOT import sources ✓
+- Streamlit lag/canvas question: resolved by migrating to React ✓
+- Node dragging: positions preserved on panel open/close via functional setNodes update ✓
+- Vite HMR on WSL /mnt/f/: fixed with usePolling in vite.config.js ✓
 
 ### Invoice Table Structure (from Invoice 2721, 2026-03-29)
 

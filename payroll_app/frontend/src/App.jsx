@@ -7,10 +7,11 @@
  *     Canvas — React Flow node graph (fills available width)
  *     Panel  — slides in on right when a node is selected
  */
-import { useState, useEffect, useCallback } from 'react'
-import WorkboardCanvas from './canvas'
-import EmployeesPanel  from './panels/EmployeesPanel'
-import TimesheetsPanel from './panels/TimesheetsPanel'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import WorkboardCanvas    from './canvas'
+import EmployeesPanel    from './panels/EmployeesPanel'
+import TimesheetsPanel   from './panels/TimesheetsPanel'
+import ApprovedHoursPanel from './panels/ApprovedHoursPanel'
 import { getPeriods, getNodeStates } from './api'
 
 const NODE_LABELS = {
@@ -43,6 +44,33 @@ export default function App() {
   const [nodeStates, setNodeStates] = useState({})
   const [activeNode, setActiveNode] = useState(null)
   const [loading,    setLoading]    = useState(true)
+  const [panelWidth, setPanelWidth] = useState(760)
+
+  // Resize handle drag state
+  const dragging   = useRef(false)
+  const dragStartX = useRef(0)
+  const dragStartW = useRef(0)
+
+  const onResizeStart = useCallback((e) => {
+    dragging.current   = true
+    dragStartX.current = e.clientX
+    dragStartW.current = panelWidth
+    e.currentTarget.classList.add('dragging')
+
+    const onMove = (e) => {
+      if (!dragging.current) return
+      const delta = dragStartX.current - e.clientX   // drag left = wider
+      setPanelWidth(Math.max(380, Math.min(1400, dragStartW.current + delta)))
+    }
+    const onUp = (e) => {
+      dragging.current = false
+      e.target.classList?.remove('dragging')
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [panelWidth])
 
   useEffect(() => {
     getPeriods()
@@ -91,6 +119,30 @@ export default function App() {
           periodId={periodId}
           onClose={() => setActiveNode(null)}
           onImportDone={handleImportDone}
+        />
+      )
+    }
+
+    const WEEK1_NODES = ['w1_payroll_pdf', 'w1_travel_pdf', 'w1_approved_hours']
+    const WEEK2_NODES = ['w2_payroll_pdf', 'w2_travel_pdf', 'w2_approved_hours']
+
+    if (WEEK1_NODES.includes(activeNode)) {
+      return (
+        <ApprovedHoursPanel
+          periodId={periodId}
+          weekNum={1}
+          onClose={() => setActiveNode(null)}
+          onDone={refreshStates}
+        />
+      )
+    }
+    if (WEEK2_NODES.includes(activeNode)) {
+      return (
+        <ApprovedHoursPanel
+          periodId={periodId}
+          weekNum={2}
+          onClose={() => setActiveNode(null)}
+          onDone={refreshStates}
         />
       )
     }
@@ -154,7 +206,8 @@ export default function App() {
         />
 
         {activeNode && (
-          <div className="side-panel">
+          <div className="side-panel" style={{ width: panelWidth }}>
+            <div className="resize-handle" onMouseDown={onResizeStart} />
             {renderPanel()}
           </div>
         )}

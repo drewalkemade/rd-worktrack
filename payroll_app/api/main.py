@@ -357,6 +357,324 @@ def get_week1_hours(period_id: int):
         conn.close()
 
 
+@app.get("/api/periods/{period_id}/week2-hours")
+def get_week2_hours(period_id: int):
+    """Return per-employee Week 2 hours (Mon–Sun of week2_ending).
+
+    Week 2 start = week1_ending + 1 day.
+    Week 2 end   = week1_ending + 7 days  (== week2_ending when present).
+    """
+    conn = _get_conn()
+    try:
+        period = db.fetch_one(conn,
+            "SELECT week1_ending, week2_ending FROM pay_periods WHERE id = ?", (period_id,))
+        if not period or not period["week1_ending"]:
+            raise HTTPException(404, "Period not found")
+
+        week1_end = date.fromisoformat(period["week1_ending"])
+        week2_start = week1_end + timedelta(days=1)   # Monday of week 2
+        week2_end   = week1_end + timedelta(days=7)   # Sunday of week 2
+
+        rows = db.fetch_all(conn, """
+            SELECT e.display_name,
+                   SUM(tdh.reg_hours)         as reg,
+                   SUM(tdh.ot1_hours)         as ot1,
+                   SUM(tdh.ot2_hours)         as ot2,
+                   SUM(tdh.drive_hours)       as drive,
+                   SUM(tdh.sick_hours)        as sick,
+                   SUM(tdh.vacation_hours)    as vacation,
+                   SUM(tdh.holiday_hours)     as holiday,
+                   SUM(tdh.nonbillable_hours) as nonbill
+            FROM timesheet_daily_hours tdh
+            JOIN timesheet_imports ti ON ti.id = tdh.timesheet_import_id
+            JOIN employees e ON e.id = tdh.employee_id
+            WHERE ti.pay_period_id = ?
+              AND tdh.work_date >= ?
+              AND tdh.work_date <= ?
+            GROUP BY tdh.employee_id
+            ORDER BY e.display_name
+        """, (period_id, str(week2_start), str(week2_end)))
+
+        return {
+            "week2_ending": period["week2_ending"] or str(week2_end),
+            "week2_start":  str(week2_start),
+            "rows": [{
+                "employee":  r["display_name"],
+                "reg":       round(r["reg"]      or 0, 2),
+                "ot1":       round(r["ot1"]      or 0, 2),
+                "ot2":       round(r["ot2"]      or 0, 2),
+                "drive":     round(r["drive"]    or 0, 2),
+                "sick":      round(r["sick"]     or 0, 2),
+                "vacation":  round(r["vacation"] or 0, 2),
+                "holiday":   round(r["holiday"]  or 0, 2),
+                "nonbill":   round(r["nonbill"]  or 0, 2),
+            } for r in rows],
+        }
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Approved hours — payroll PDF + travel PDF import + weekly verification
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/periods/{period_id}/weeks/{week_num}")
+def get_week(period_id: int, week_num: int):
+    """Return the weekly_approval record for this period/week (import status)."""
+    conn = _get_conn()
+    try:
+        row = db.fetch_one(conn,
+            "SELECT * FROM weekly_approvals WHERE pay_period_id = ? AND week_number = ?",
+            (period_id, week_num))
+        if not row:
+            return {"exists": False}
+        return {"exists": True, **dict(row)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/import/payroll-pdf")
+async def import_payroll_pdf_endpoint(
+    file: UploadFile = File(...),
+    period_id: int   = Form(...),
+    week_num: int    = Form(...),
+):
+    """Upload a payroll approval PDF and import it for the given period/week."""
+    conn = _get_conn()
+    try:
+        period = db.fetch_one(conn,
+            "SELECT week1_ending, week2_ending FROM pay_periods WHERE id = ?", (period_id,))
+        if not period:
+            raise HTTPException(404, "Period not found")
+
+        week_ending_str = period["week1_ending"] if week_num == 1 else period["week2_ending"]
+        if not week_ending_str:
+            raise HTTPException(400, f"week{week_num}_ending not set on this period")
+
+        content = await file.read()
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        try:
+            result = importer.import_payroll_pdf(
+                conn, tmp_path,
+                week_ending_date=week_ending_str,
+                original_name=file.filename,
+                normalized_name=file.filename,
+            )
+            conn.commit()
+            return {
+                "success":            result.success,
+                "weekly_approval_id": result.weekly_approval_id,
+                "employee_count":     result.employee_count,
+                "skipped":            result.skipped_count,
+                "warnings":           result.warnings,
+                "errors":             result.errors,
+                "extraction_log":     result.extraction_log,
+            }
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+    finally:
+        conn.close()
+
+
+@app.post("/api/import/travel-pdf")
+async def import_travel_pdf_endpoint(
+    file: UploadFile = File(...),
+    period_id: int   = Form(...),
+    week_num: int    = Form(...),
+):
+    """Upload a travel PDF and import it (date range is parsed from the PDF itself)."""
+    conn = _get_conn()
+    try:
+        content = await file.read()
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        try:
+            result = importer.import_travel_pdf(
+                conn, tmp_path,
+                original_name=file.filename,
+                normalized_name=file.filename,
+            )
+            conn.commit()
+            return {
+                "success":            result.success,
+                "weekly_approval_id": result.weekly_approval_id,
+                "employee_count":     result.employee_count,
+                "skipped":            result.skipped_count,
+                "warnings":           result.warnings,
+                "errors":             result.errors,
+                "extraction_log":     result.extraction_log,
+            }
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+    finally:
+        conn.close()
+
+
+@app.post("/api/periods/{period_id}/weeks/{week_num}/verify")
+def run_verification(period_id: int, week_num: int):
+    """Run weekly_verifier for this period/week. Creates/updates verification rows."""
+    conn = _get_conn()
+    try:
+        wa = db.fetch_one(conn,
+            "SELECT id FROM weekly_approvals WHERE pay_period_id = ? AND week_number = ?",
+            (period_id, week_num))
+        if not wa:
+            raise HTTPException(404, "No weekly_approval found — import a payroll PDF first")
+
+        summary = weekly_verifier.run_weekly_verification(conn, wa["id"])
+        conn.commit()
+        return {
+            "weekly_approval_id":    summary.weekly_approval_id,
+            "total_employees":       summary.total_employees,
+            "needs_review_count":    summary.needs_review_count,
+            "pending_count":         summary.pending_count,
+            "verified_count":        summary.verified_count,
+            "provisional_sunday":    summary.provisonal_sunday_count,
+            "warnings":              summary.warnings,
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/api/periods/{period_id}/weeks/{week_num}/verification")
+def get_verification(period_id: int, week_num: int):
+    """Return all verification rows for this period/week."""
+    conn = _get_conn()
+    try:
+        wa = db.fetch_one(conn,
+            "SELECT id FROM weekly_approvals WHERE pay_period_id = ? AND week_number = ?",
+            (period_id, week_num))
+        if not wa:
+            return {"rows": []}
+
+        rows = weekly_verifier.get_verification_status(conn, wa["id"])
+        return {
+            "weekly_approval_id": wa["id"],
+            "rows": [{
+                "employee_id":             r.employee_id,
+                "display_name":            r.display_name,
+                "approved_reg":            r.approved_reg,
+                "approved_ot":             r.approved_ot,
+                "approved_dbl":            r.approved_dbl,
+                "approved_travel":         r.approved_travel,
+                "timesheet_reg":           r.timesheet_week_reg,
+                "timesheet_ot1":           r.timesheet_week_ot1,
+                "timesheet_ot2":           r.timesheet_week_ot2,
+                "timesheet_drive":         r.timesheet_week_drive,
+                "timesheet_sick":          r.timesheet_week_sick,
+                "timesheet_vacation":      r.timesheet_week_vacation,
+                "timesheet_holiday":       r.timesheet_week_holiday,
+                "timesheet_nonbill":       r.timesheet_week_nonbillable,
+                "reg_variance":            r.reg_variance,
+                "ot_variance":             r.ot_variance,
+                "dbl_variance":            r.dbl_variance,
+                "needs_expense_review":    r.needs_expense_review,
+                "per_diem_count":          r.simple_per_diem_count,
+                "extra_expense_note":      r.extra_expense_note,
+                "travel_sun_status":       r.travel_sun_status,
+                "travel_sun_hours":        r.travel_sun_hours,
+                "status":                  r.status,
+                "verified_at":             r.verified_at,
+            } for r in rows],
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/api/periods/{period_id}/weeks/{week_num}/set-verified/{employee_id}")
+def set_employee_verified(period_id: int, week_num: int, employee_id: int, body: dict = {}):
+    """Mark a specific employee/week as verified."""
+    conn = _get_conn()
+    try:
+        wa = db.fetch_one(conn,
+            "SELECT id FROM weekly_approvals WHERE pay_period_id = ? AND week_number = ?",
+            (period_id, week_num))
+        if not wa:
+            raise HTTPException(404, "No weekly_approval found")
+
+        weekly_verifier.set_verified(conn, wa["id"], employee_id, note=body.get("note"))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/periods/{period_id}/expenses")
+def get_period_expenses(period_id: int):
+    """Return all expense_items for the period, tagged with week 1 or 2.
+
+    Items with no work_date are included under week = null.
+    Ordered by employee name, then work_date.
+    """
+    conn = _get_conn()
+    try:
+        period = db.fetch_one(conn,
+            "SELECT week1_ending FROM pay_periods WHERE id = ?", (period_id,))
+        if not period or not period["week1_ending"]:
+            raise HTTPException(404, "Period not found")
+
+        week1_end   = date.fromisoformat(period["week1_ending"])
+        week1_start = week1_end - timedelta(days=6)
+        week2_start = week1_end + timedelta(days=1)
+        week2_end   = week1_end + timedelta(days=7)
+
+        rows = db.fetch_all(conn, """
+            SELECT e.display_name  AS employee,
+                   ei.work_date,
+                   ei.category,
+                   ei.description,
+                   ei.currency,
+                   ei.amount,
+                   ei.quantity,
+                   ei.requires_receipt,
+                   ei.receipt_status,
+                   ei.reimbursement_status,
+                   ei.billing_status
+            FROM expense_items ei
+            JOIN employees e ON e.id = ei.employee_id
+            WHERE ei.pay_period_id = ?
+            ORDER BY e.display_name, ei.work_date
+        """, (period_id,))
+
+        items = []
+        for r in rows:
+            wd = r["work_date"]
+            if wd:
+                d = date.fromisoformat(wd)
+                if week1_start <= d <= week1_end:
+                    week = 1
+                elif week2_start <= d <= week2_end:
+                    week = 2
+                else:
+                    week = None
+            else:
+                week = None
+
+            items.append({
+                "week":                 week,
+                "employee":             r["employee"],
+                "work_date":            wd,
+                "category":             r["category"],
+                "description":          r["description"],
+                "currency":             r["currency"],
+                "amount":               float(r["amount"] or 0),
+                "quantity":             float(r["quantity"] or 1),
+                "requires_receipt":     bool(r["requires_receipt"]),
+                "receipt_status":       r["receipt_status"],
+                "reimbursement_status": r["reimbursement_status"],
+                "billing_status":       r["billing_status"],
+            })
+
+        return {"week1_ending": str(week1_end), "items": items}
+    finally:
+        conn.close()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Health check
 # ═══════════════════════════════════════════════════════════════════════════════

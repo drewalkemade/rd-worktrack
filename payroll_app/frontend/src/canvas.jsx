@@ -19,6 +19,15 @@ import WorkboardNode from './nodes/WorkboardNode'
 
 const nodeTypes = { workboard: WorkboardNode }
 
+// Named outputs for nodes that fan out to multiple targets.
+// Key = node id, value = array of { id, label } passed to WorkboardNode.
+const NODE_OUTPUTS = {
+  timesheets: [
+    { id: 'week1', label: 'Wk 1' },
+    { id: 'week2', label: 'Wk 2' },
+  ],
+}
+
 // ── Node definitions ──────────────────────────────────────────────────────────
 // [id, label, color, x, y, width, badge, hasInput, hasOutput]
 const NODE_DEFS = [
@@ -53,9 +62,10 @@ const NODE_DEFS = [
 ]
 
 // ── Edge definitions ──────────────────────────────────────────────────────────
+// [source, target, sourceHandle?]  — sourceHandle matches a NODE_OUTPUTS id
 const EDGE_DEFS = [
-  ['timesheets',        'w1_approved_hours'],
-  ['timesheets',        'w2_approved_hours'],
+  ['timesheets',        'w1_approved_hours', 'week1'],
+  ['timesheets',        'w2_approved_hours', 'week2'],
   ['w1_payroll_pdf',    'w1_approved_hours'],
   ['w1_travel_pdf',     'w1_approved_hours'],
   ['w1_approved_hours', 'w1_reconcile'],
@@ -107,16 +117,18 @@ function buildNodes(nodeStates, selectedId, onNodeOpen) {
       summary:  STATE_SUMMARY[nodeStates?.[id]] || 'No data yet',
       hasInput,
       hasOutput,
+      outputs:  NODE_OUTPUTS[id] || null,
       onOpen:   () => onNodeOpen(id),
     },
   }))
 }
 
 function buildEdges(nodeStates) {
-  return EDGE_DEFS.map(([src, tgt], i) => ({
+  return EDGE_DEFS.map(([src, tgt, sourceHandle], i) => ({
     id: `e-${src}-${tgt}`,
     source: src,
     target: tgt,
+    ...(sourceHandle ? { sourceHandle } : {}),
     ...EDGE_STYLE,
     style: {
       ...EDGE_STYLE.style,
@@ -138,7 +150,23 @@ export default function WorkboardCanvas({ nodeStates, selectedNodeId, onNodeOpen
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
   useEffect(() => {
-    setNodes(buildNodes(nodeStates, selectedNodeId, onNodeOpen))
+    setNodes(prev => {
+      // First load — build from NODE_DEFS positions
+      if (prev.length === 0) {
+        return buildNodes(nodeStates, selectedNodeId, onNodeOpen)
+      }
+      // Subsequent updates — preserve user-dragged positions, only update data + selected
+      return prev.map(node => ({
+        ...node,
+        selected: node.id === selectedNodeId,
+        data: {
+          ...node.data,
+          state:   nodeStates?.[node.id] || 'idle',
+          summary: STATE_SUMMARY[nodeStates?.[node.id]] || 'No data yet',
+          onOpen:  () => onNodeOpen(node.id),
+        },
+      }))
+    })
     setEdges(buildEdges(nodeStates))
   }, [nodeStates, selectedNodeId])
 
@@ -159,7 +187,7 @@ export default function WorkboardCanvas({ nodeStates, selectedNodeId, onNodeOpen
         fitViewOptions={{ padding: 0.12 }}
         minZoom={0.3}
         maxZoom={1.5}
-        nodesDraggable={false}
+        nodesDraggable={true}
         nodesConnectable={false}
         elementsSelectable={true}
         proOptions={{ hideAttribution: true }}

@@ -16,7 +16,7 @@ const STATE_COLOR = { idle: '#8b949e', partial: '#f59e0b', complete: '#22c55e' }
 
 export default function WorkboardNode({ data, selected }) {
   const { label, color, badge, state = 'idle', summary, onOpen,
-          hasInput = true, hasOutput = true } = data
+          hasInput = true, hasOutput = true, outputs = null } = data
 
   const stateIcon  = STATE_ICON[state]  || ''
   const stateColor = STATE_COLOR[state] || '#8b949e'
@@ -54,7 +54,34 @@ export default function WorkboardNode({ data, selected }) {
         </button>
       </div>
 
-      {hasOutput && (
+      {/* Multiple named outputs (e.g. Timesheets → Wk 1 / Wk 2) */}
+      {outputs ? (
+        outputs.map((o, i) => {
+          const topPct = `${(i + 1) * 100 / (outputs.length + 1)}%`
+          return (
+            <span key={o.id}>
+              <span style={{
+                position: 'absolute',
+                right: 14,
+                top: topPct,
+                transform: 'translateY(-50%)',
+                fontSize: 9,
+                color: '#6b7280',
+                pointerEvents: 'none',
+                userSelect: 'none',
+              }}>
+                {o.label}
+              </span>
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={o.id}
+                style={{ top: topPct, transform: 'translateY(-50%)' }}
+              />
+            </span>
+          )
+        })
+      ) : hasOutput && (
         <Handle type="source" position={Position.Right}
           style={{ top: '50%', transform: 'translateY(-50%)' }} />
       )}

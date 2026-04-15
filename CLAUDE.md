@@ -258,7 +258,7 @@ Travel notes:
 - **Phase 1** ✓ DONE — schema, source-file ingestion, workbook validation gate, extractor rewrites, regression tests
 - **Phase 2** ✓ DONE — importer, weekly verifier, reconciler, payroll writer, expense exporter, receipt tracking; post-phase additions: travel reclassification, assume_travel_from_timesheet(), extraction log, Paul Robertson, bulk_import.py (198 tests total)
 - **Phase 3** ✓ DONE — all 7 Streamlit pages: Dashboard (+ Danger Zone DB clear), Import, Weekly Verification (sick/vacation/holiday/nonbillable columns), Reconcile (invoice table + CSV export), Expenses, Employees, Reports (payroll export + Sage 50 CSV); Sage 50 export rewritten from DB with UTF-16 encoding + sage50_name alias; travel aliases added for Atkinson/Wiseman/Renwick
-- **Phase 4** ← CURRENT — workboard UI complete (`0_Workboard.py`, replaces all 7 pages); all node detail panels wired to pipeline; Matina Rahbar Ranji sage50_name alias added; next: Employees page → st.data_editor grids, verification tab (Time Log-style), receipt polish, audit coverage
+- **Phase 4** ← CURRENT — Streamlit deprecated; React + FastAPI workboard built; EmployeesPanel (inline-edit grid + aliases), TimesheetsPanel (XLSX upload + Wk1/Wk2 hours + expenses), ApprovedHoursPanel (payroll PDF + travel PDF import, verification table with colour-grouped columns, per-row verify with required note for needs_review), resizable side panel, Vite polling for WSL; next: Reconcile node
 
 The weekly verification workflow is not optional and should not be deferred behind cosmetic UI work.
 
