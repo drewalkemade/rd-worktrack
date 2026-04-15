@@ -199,10 +199,14 @@ CREATE TABLE IF NOT EXISTS weekly_employee_verification (
     weekly_approval_id    INTEGER NOT NULL REFERENCES weekly_approvals(id),
     employee_id           INTEGER NOT NULL REFERENCES employees(id),
     -- timesheet hours for this specific week (summed from daily rows)
-    timesheet_week_reg    DECIMAL NOT NULL DEFAULT 0,
-    timesheet_week_ot1    DECIMAL NOT NULL DEFAULT 0,
-    timesheet_week_ot2    DECIMAL NOT NULL DEFAULT 0,
-    timesheet_week_drive  DECIMAL NOT NULL DEFAULT 0,
+    timesheet_week_reg         DECIMAL NOT NULL DEFAULT 0,
+    timesheet_week_ot1         DECIMAL NOT NULL DEFAULT 0,
+    timesheet_week_ot2         DECIMAL NOT NULL DEFAULT 0,
+    timesheet_week_drive       DECIMAL NOT NULL DEFAULT 0,
+    timesheet_week_sick        DECIMAL NOT NULL DEFAULT 0,
+    timesheet_week_vacation    DECIMAL NOT NULL DEFAULT 0,
+    timesheet_week_holiday     DECIMAL NOT NULL DEFAULT 0,
+    timesheet_week_nonbillable DECIMAL NOT NULL DEFAULT 0,
     -- customer-approved hours for this week
     approved_reg          DECIMAL NOT NULL DEFAULT 0,
     approved_ot           DECIMAL NOT NULL DEFAULT 0,

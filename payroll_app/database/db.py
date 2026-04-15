@@ -44,15 +44,35 @@ def get_connection() -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 def initialize_database(conn: sqlite3.Connection) -> None:
-    """Run schema.sql against the database.
+    """Run schema.sql against the database, then apply any in-code migrations.
 
     Safe to call on an already-initialized database because all CREATE TABLE
-    statements use IF NOT EXISTS.
+    statements use IF NOT EXISTS.  Column additions use ALTER TABLE with a
+    try/except to silently skip columns that already exist.
     """
     schema_path = Path(__file__).parent / "schema.sql"
     sql = schema_path.read_text(encoding="utf-8")
     conn.executescript(sql)
     conn.commit()
+
+    # ---------------------------------------------------------------------------
+    # In-code migrations — add columns that may not exist in older databases.
+    # SQLite raises OperationalError("duplicate column name: ...") if the column
+    # already exists; we catch and ignore that specific error.
+    # ---------------------------------------------------------------------------
+    _new_columns = [
+        ("weekly_employee_verification", "timesheet_week_sick",        "DECIMAL NOT NULL DEFAULT 0"),
+        ("weekly_employee_verification", "timesheet_week_vacation",    "DECIMAL NOT NULL DEFAULT 0"),
+        ("weekly_employee_verification", "timesheet_week_holiday",     "DECIMAL NOT NULL DEFAULT 0"),
+        ("weekly_employee_verification", "timesheet_week_nonbillable", "DECIMAL NOT NULL DEFAULT 0"),
+    ]
+    for table, column, definition in _new_columns:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Column already exists — nothing to do.
+            pass
 
 
 # ---------------------------------------------------------------------------

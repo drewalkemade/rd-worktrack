@@ -385,56 +385,137 @@ def export_sage50_csv(
     period_end_date: str,
     workbook_path: str | Path | None = None,
 ) -> Path:
-    """Read the Current sheet export range and write the Sage 50 CSV.
+    """Generate the Sage 50 payroll CSV directly from the database and write it.
 
-    Reads cells V1:AC50 from the 'Current' sheet and writes them as a CSV to
-    the non-negotiable Sage 50 path: config.sage50_csv_filename(period_end_date).
+    Builds one block of 6 rows per approved employee (Regular, Overtime 1,
+    Overtime 2, Drive, Holiday, Non-Billable) using final approved hours from
+    the reconciliation table and holiday/non-billable hours from timesheet_hours.
+
+    The CSV is written UTF-16 LE with BOM (encoding="utf-16"), which is the
+    format Sage 50 requires.  Python's "utf-16" codec writes the BOM
+    automatically and selects LE on little-endian systems (Windows).
+
+    Only employees whose reconciliation status is 'approved' or 'exported' are
+    included.  Employees are sorted by display_name (or sage50_name alias when
+    one is registered).
 
     The period_end_date must be in YYYYMMDD format (e.g. '20260329').
+    The output date column uses M/D/YYYY format without zero-padding.
+
+    The output path is non-negotiable: config.sage50_csv_filename(period_end_date).
 
     Args:
         conn:             Open database connection.
-        pay_period_id:    pay_periods.id (for audit log only).
-        period_end_date:  YYYYMMDD string for the filename.
-        workbook_path:    Path to PayrollChequeRun_v00.xlsm.
+        pay_period_id:    pay_periods.id
+        period_end_date:  YYYYMMDD string for the filename and the Date column.
+        workbook_path:    Unused — kept for interface compatibility.
 
     Returns:
         Path to the CSV file written.
 
     Raises:
-        FileNotFoundError: If the workbook does not exist.
-        ValueError:        If the Current sheet is not present.
+        ValueError: If period_end_date cannot be parsed.
     """
-    wb_path = Path(workbook_path or config.PAYROLL_CHEQUE_RUN_WORKBOOK)
-    if not wb_path.exists():
-        raise FileNotFoundError(f"Workbook not found: {wb_path}")
+    import datetime as _dt
 
-    wb = openpyxl.load_workbook(str(wb_path), keep_vba=True, data_only=True)
+    # Parse period_end_date (YYYYMMDD) → M/D/YYYY for the Sage 50 Date column
+    parsed_end = _dt.date(
+        int(period_end_date[0:4]),
+        int(period_end_date[4:6]),
+        int(period_end_date[6:8]),
+    )
+    sage50_date = f"{parsed_end.month}/{parsed_end.day}/{parsed_end.year}"
 
-    if _CURRENT_SHEET not in wb.sheetnames:
-        raise ValueError(
-            f"Sheet {_CURRENT_SHEET!r} not found in workbook.  "
-            f"Available: {wb.sheetnames}"
+    # Fetch all approved/exported reconciliation rows, joined to employee names
+    rec_rows = db.fetch_all(
+        conn,
+        """
+        SELECT r.employee_id, e.display_name,
+               r.final_reg, r.final_ot, r.final_dbl, r.final_drive
+        FROM reconciliation r
+        JOIN employees e ON e.id = r.employee_id
+        WHERE r.pay_period_id = ?
+          AND r.status IN ('approved', 'exported')
+        ORDER BY e.display_name
+        """,
+        (pay_period_id,),
+    )
+
+    # Build the CSV rows: header + 6 rows per employee
+    _INCOME_TYPES = [
+        "Regular",
+        "Overtime 1",
+        "Overtime 2",
+        "Drive",
+        "Holiday",
+        "Non-Billable",
+    ]
+
+    output_rows: list[list[Any]] = [
+        ["Name", "Date", "Income", "Hours", "Pieces", "Amount", "Project", "Comment"]
+    ]
+
+    for rec in rec_rows:
+        emp_id       = rec["employee_id"]
+        display_name = rec["display_name"]
+
+        # Look up sage50_name alias — use it as the Name column if present
+        alias_row = db.fetch_one(
+            conn,
+            """
+            SELECT alias_value FROM employee_aliases
+            WHERE employee_id = ? AND alias_type = 'sage50_name'
+            LIMIT 1
+            """,
+            (emp_id,),
         )
+        sage50_name = alias_row["alias_value"] if alias_row else display_name
 
-    ws = wb[_CURRENT_SHEET]
+        # Fetch holiday and non-billable from timesheet_hours for this period
+        ts_row = db.fetch_one(
+            conn,
+            """
+            SELECT holiday_hours, nonbillable_hours
+            FROM timesheet_hours
+            WHERE pay_period_id = ? AND employee_id = ?
+            """,
+            (pay_period_id, emp_id),
+        )
+        holiday_hours     = float(ts_row["holiday_hours"]     or 0) if ts_row else 0.0
+        nonbillable_hours = float(ts_row["nonbillable_hours"] or 0) if ts_row else 0.0
 
-    # Read V1:AC50
-    export_data: list[list[Any]] = []
-    for row_num in range(_EXPORT_ROW_START, _EXPORT_ROW_END + 1):
-        row_values = [
-            ws.cell(row=row_num, column=col_num).value
-            for col_num in range(_EXPORT_COL_START, _EXPORT_COL_END + 1)
-        ]
-        export_data.append(row_values)
+        # Hours in the same order as _INCOME_TYPES
+        hours_by_type = {
+            "Regular":      float(rec["final_reg"]   or 0),
+            "Overtime 1":   float(rec["final_ot"]    or 0),
+            "Overtime 2":   float(rec["final_dbl"]   or 0),
+            "Drive":        float(rec["final_drive"] or 0),
+            "Holiday":      holiday_hours,
+            "Non-Billable": nonbillable_hours,
+        }
 
-    # Write CSV
+        for income_type in _INCOME_TYPES:
+            hours = hours_by_type[income_type]
+            # Format: drop .0 for whole numbers so "78" not "78.0"
+            hours_str = str(int(hours)) if hours == int(hours) else str(hours)
+            output_rows.append([
+                sage50_name,
+                sage50_date,
+                income_type,
+                hours_str,
+                "",   # Pieces
+                "",   # Amount
+                "",   # Project
+                "",   # Comment
+            ])
+
+    # Write CSV — UTF-16 LE with BOM (Sage 50 requirement)
     csv_path = config.sage50_csv_filename(period_end_date)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(str(csv_path), "w", newline="", encoding="utf-8") as fh:
+    with open(str(csv_path), "w", newline="", encoding="utf-16") as fh:
         writer = csv.writer(fh)
-        writer.writerows(export_data)
+        writer.writerows(output_rows)
 
     db.log_audit(
         conn,

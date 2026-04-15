@@ -107,8 +107,12 @@ class TestRunReconciliation:
         # Jeremias has no timesheet in this test setup but appears in payroll PDF
         assert len(rows) >= 6
 
-    def test_trif_final_hours_equal_approved(self, conn):
-        """For billable employees, final_* = customer-approved values."""
+    def test_trif_final_hours_equal_approved_no_travel(self, conn):
+        """For billable employees with no travel, final_* = customer-approved values.
+
+        No travel PDF is imported in this test, so travel_sun=0 and travel_non_sun=0.
+        The reclassification is a no-op and final_* must equal the approved values.
+        """
         pay_period_id, _ = _full_import_and_verify(conn)
         run_reconciliation(conn, pay_period_id)
 
@@ -121,7 +125,7 @@ class TestRunReconciliation:
             (pay_period_id, trif_id),
         )
         assert row is not None
-        # Trif: approved REG=40, OT=32, DBL=12
+        # Trif: approved REG=40, OT=32, DBL=12; no travel → no reclassification
         assert row["final_reg"] == pytest.approx(40.0, abs=0.01)
         assert row["final_ot"]  == pytest.approx(32.0, abs=0.01)
         assert row["final_dbl"] == pytest.approx(12.0, abs=0.01)
@@ -212,6 +216,172 @@ class TestRunReconciliation:
     def test_invalid_period_raises(self, conn):
         with pytest.raises(ValueError, match="not found"):
             run_reconciliation(conn, pay_period_id=9999)
+
+
+# ---------------------------------------------------------------------------
+# Travel reclassification tests
+# ---------------------------------------------------------------------------
+
+class TestTravelReclassification:
+    """Verify that travel hours displace premium hours correctly.
+
+    The reconciler imports the pure helper directly so we can unit-test
+    the displacement algorithm without needing the full DB pipeline.
+    """
+
+    def _insert_travel(self, conn, pay_period_id, wa_id, employee_id,
+                       week_total, sun_hours=0.0, sun_status="n/a"):
+        """Insert a travel_hours row for a given weekly_approval."""
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO travel_hours
+                (weekly_approval_id, employee_id,
+                 current_week_total, current_sun_hours_assumed, current_sun_status)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (wa_id, employee_id, week_total, sun_hours, sun_status),
+        )
+
+    # --- Pure function unit tests (import private helper directly) ---
+
+    def test_no_travel_is_identity(self):
+        from payroll_app.pipeline.reconciler import _reclassify_travel
+        reg, ot, dbl, drive = _reclassify_travel(40.0, 4.0, 0.0, 0.0, 0.0)
+        assert reg   == pytest.approx(40.0)
+        assert ot    == pytest.approx(4.0)
+        assert dbl   == pytest.approx(0.0)
+        assert drive == pytest.approx(0.0)
+
+    def test_non_sun_travel_displaces_ot_first(self):
+        from payroll_app.pipeline.reconciler import _reclassify_travel
+        # 40 reg + 8 OT worked, 8 hrs travel → all OT displaced
+        reg, ot, dbl, drive = _reclassify_travel(40.0, 8.0, 0.0, 0.0, 8.0)
+        assert reg   == pytest.approx(40.0)
+        assert ot    == pytest.approx(0.0)
+        assert dbl   == pytest.approx(0.0)
+        assert drive == pytest.approx(8.0)
+
+    def test_non_sun_travel_spills_into_reg(self):
+        from payroll_app.pipeline.reconciler import _reclassify_travel
+        # 40 reg + 4 OT worked, 8 travel → OT=0, reg reduced by remaining 4
+        reg, ot, dbl, drive = _reclassify_travel(40.0, 4.0, 0.0, 0.0, 8.0)
+        assert reg   == pytest.approx(36.0)
+        assert ot    == pytest.approx(0.0)
+        assert dbl   == pytest.approx(0.0)
+        assert drive == pytest.approx(8.0)
+
+    def test_confirmed_example_from_spec(self):
+        """44 hrs worked (40 reg / 4 OT) + 8 travel → 36 reg / 0 OT / 0 DT / 8 drive."""
+        from payroll_app.pipeline.reconciler import _reclassify_travel
+        reg, ot, dbl, drive = _reclassify_travel(40.0, 4.0, 0.0, 0.0, 8.0)
+        assert reg   == pytest.approx(36.0)
+        assert ot    == pytest.approx(0.0)
+        assert dbl   == pytest.approx(0.0)
+        assert drive == pytest.approx(8.0)
+
+    def test_sunday_travel_displaces_dbl_first(self):
+        from payroll_app.pipeline.reconciler import _reclassify_travel
+        # 40 reg + 8 OT + 12 DBL, 6 hrs Sunday travel → DBL reduced
+        reg, ot, dbl, drive = _reclassify_travel(40.0, 8.0, 12.0, 6.0, 0.0)
+        assert dbl   == pytest.approx(6.0)
+        assert ot    == pytest.approx(8.0)
+        assert reg   == pytest.approx(40.0)
+        assert drive == pytest.approx(6.0)
+
+    def test_sunday_travel_spills_into_ot_then_reg(self):
+        from payroll_app.pipeline.reconciler import _reclassify_travel
+        # 40 reg + 4 OT + 2 DBL, 10 hrs Sunday travel: 2 from DBL, 4 from OT, 4 from reg
+        reg, ot, dbl, drive = _reclassify_travel(40.0, 4.0, 2.0, 10.0, 0.0)
+        assert dbl   == pytest.approx(0.0)
+        assert ot    == pytest.approx(0.0)
+        assert reg   == pytest.approx(36.0)
+        assert drive == pytest.approx(10.0)
+
+    def test_combined_sun_and_non_sun_travel(self):
+        from payroll_app.pipeline.reconciler import _reclassify_travel
+        # 40 reg + 8 OT + 4 DBL, 4 sun + 4 non-sun = 8 total travel
+        # Sun: 4 from DBL → DBL=0
+        # Non-sun: 4 from OT → OT=4
+        reg, ot, dbl, drive = _reclassify_travel(40.0, 8.0, 4.0, 4.0, 4.0)
+        assert dbl   == pytest.approx(0.0)
+        assert ot    == pytest.approx(4.0)
+        assert reg   == pytest.approx(40.0)
+        assert drive == pytest.approx(8.0)
+
+    # --- Integration tests: travel hours inserted in DB affect reconciliation ---
+
+    def test_non_sun_travel_displaces_ot_in_reconciliation(self, conn):
+        """Inserting Mon–Sat travel reduces OT in the final reconciliation row."""
+        pay_period_id, wa_id = _full_import_and_verify(conn)
+
+        trif_id = db.fetch_one(
+            conn, "SELECT id FROM employees WHERE pdf_name = 'TRIF, DANIEL'"
+        )["id"]
+
+        # Trif: approved REG=40, OT=32, DBL=12
+        # Insert 8 hrs non-Sunday travel for this week — should reduce OT to 24
+        self._insert_travel(conn, pay_period_id, wa_id, trif_id,
+                            week_total=8.0, sun_hours=0.0, sun_status="n/a")
+
+        run_reconciliation(conn, pay_period_id)
+
+        row = db.fetch_one(
+            conn,
+            "SELECT * FROM reconciliation WHERE pay_period_id = ? AND employee_id = ?",
+            (pay_period_id, trif_id),
+        )
+        assert row["cust_drive"] == pytest.approx(8.0, abs=0.01)
+        assert row["final_drive"] == pytest.approx(8.0, abs=0.01)
+        assert row["final_ot"]  == pytest.approx(24.0, abs=0.01)  # 32 - 8
+        assert row["final_reg"] == pytest.approx(40.0, abs=0.01)  # unchanged
+        assert row["final_dbl"] == pytest.approx(12.0, abs=0.01)  # unchanged
+
+    def test_sunday_travel_displaces_dbl_in_reconciliation(self, conn):
+        """Confirmed Sunday travel reduces DBL in the final reconciliation row."""
+        pay_period_id, wa_id = _full_import_and_verify(conn)
+
+        trif_id = db.fetch_one(
+            conn, "SELECT id FROM employees WHERE pdf_name = 'TRIF, DANIEL'"
+        )["id"]
+
+        # Trif: REG=40, OT=32, DBL=12
+        # Insert 8 hrs confirmed Sunday travel — should reduce DBL to 4
+        self._insert_travel(conn, pay_period_id, wa_id, trif_id,
+                            week_total=0.0, sun_hours=8.0, sun_status="confirmed")
+
+        run_reconciliation(conn, pay_period_id)
+
+        row = db.fetch_one(
+            conn,
+            "SELECT * FROM reconciliation WHERE pay_period_id = ? AND employee_id = ?",
+            (pay_period_id, trif_id),
+        )
+        assert row["final_drive"] == pytest.approx(8.0, abs=0.01)
+        assert row["final_dbl"]   == pytest.approx(4.0, abs=0.01)   # 12 - 8
+        assert row["final_ot"]    == pytest.approx(32.0, abs=0.01)  # unchanged
+        assert row["final_reg"]   == pytest.approx(40.0, abs=0.01)  # unchanged
+
+    def test_pending_next_pdf_sunday_not_included(self, conn):
+        """Sunday hours with status='pending_next_pdf' must NOT count in reclassification."""
+        pay_period_id, wa_id = _full_import_and_verify(conn)
+
+        trif_id = db.fetch_one(
+            conn, "SELECT id FROM employees WHERE pdf_name = 'TRIF, DANIEL'"
+        )["id"]
+
+        self._insert_travel(conn, pay_period_id, wa_id, trif_id,
+                            week_total=0.0, sun_hours=8.0, sun_status="pending_next_pdf")
+
+        run_reconciliation(conn, pay_period_id)
+
+        row = db.fetch_one(
+            conn,
+            "SELECT * FROM reconciliation WHERE pay_period_id = ? AND employee_id = ?",
+            (pay_period_id, trif_id),
+        )
+        # pending_next_pdf Sunday hours → drive=0, DBL unchanged
+        assert row["final_drive"] == pytest.approx(0.0, abs=0.01)
+        assert row["final_dbl"]   == pytest.approx(12.0, abs=0.01)
 
 
 # ---------------------------------------------------------------------------

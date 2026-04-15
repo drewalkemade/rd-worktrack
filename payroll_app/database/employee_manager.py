@@ -37,6 +37,7 @@ _SEED_EMPLOYEES = [
         "aliases": [
             ("pdf_name",    "TRIF, DANIEL"),
             ("travel_name", "Daniel Trif"),
+            ("display_name", "Daniel Trif"),
         ],
     },
     {
@@ -48,6 +49,7 @@ _SEED_EMPLOYEES = [
         "aliases": [
             ("pdf_name",    "JEREMIAS, JERRY"),
             ("travel_name", "Jerry Jeremias"),
+            ("display_name", "Jerry Jeremias"),
         ],
     },
     {
@@ -60,6 +62,8 @@ _SEED_EMPLOYEES = [
             ("pdf_name",    "SALEH, YOUSOF"),
             ("travel_name", "Yousof Saleh"),
             ("travel_name", "Saleh, Yousof"),
+            ("display_name", "Yousof Saleh"),
+            ("sage50_name", "Youssof Saleh"),   # preferred spelling per employee request
         ],
     },
     {
@@ -73,6 +77,9 @@ _SEED_EMPLOYEES = [
             # Travel PDF shows "Florin Moldovan Has" — "Has" is noise from the PDF layout
             ("travel_name", "Florin Moldovan"),
             ("travel_name", "Florin Moldovan Has"),
+            ("display_name", "Florin Moldovan"),
+            # Sage 50 payroll system has this employee registered under a different name
+            ("sage50_name", "Florin Moldovan Has"),
         ],
     },
     {
@@ -84,6 +91,7 @@ _SEED_EMPLOYEES = [
         "aliases": [
             ("pdf_name",    "ZORZI, JARRETT"),
             ("travel_name", "Jarrett Zorzi"),
+            ("display_name", "Jarrett Zorzi"),
         ],
     },
     {
@@ -95,6 +103,62 @@ _SEED_EMPLOYEES = [
         "aliases": [
             ("pdf_name",    "EBBINGHAUS, ZACHARY"),
             ("travel_name", "Zachary Ebbinghaus"),
+            ("display_name", "Zachary Ebbinghaus"),
+        ],
+    },
+    # ---- Former Centerline-billable employee ----
+    # Paul Robertson (E8473) was active Dec 2025 – Mar 2026, then left the team.
+    # Kept in seed data so historical imports resolve correctly.
+    {
+        "display_name":   "Paul Robertson",
+        "pdf_name":       "ROBERTSON, PAUL",
+        "pdf_id":         "E8473",
+        "centerline_id":  8473,
+        "assignment":     config.ASSIGNMENT_BILLABLE,
+        "aliases": [
+            ("pdf_name",    "ROBERTSON, PAUL"),
+            ("travel_name", "Paul Robertson"),
+            ("display_name", "Paul Robertson"),
+        ],
+    },
+    # ---- Centerline-billable employees (no R&D timesheet — appear in PDF only) ----
+    # These employees are billed to Centerline but do not submit timesheets to R&D.
+    # Their approved hours still need to be imported for invoicing purposes.
+    {
+        "display_name":   "Jeremy Atkinson",
+        "pdf_name":       "ATKINSON, JEREMY",
+        "pdf_id":         "E8022",
+        "centerline_id":  8022,
+        "assignment":     config.ASSIGNMENT_BILLABLE,
+        "aliases": [
+            ("pdf_name",    "ATKINSON, JEREMY"),
+            ("travel_name", "Jeremy Atkinson"),
+            ("display_name", "Jeremy Atkinson"),
+        ],
+    },
+    {
+        "display_name":   "Jeremy Wiseman",
+        "pdf_name":       "WISEMAN, JEREMY",
+        "pdf_id":         "E8031",
+        "centerline_id":  8031,
+        "assignment":     config.ASSIGNMENT_BILLABLE,
+        "aliases": [
+            ("pdf_name",    "WISEMAN, JEREMY"),
+            ("travel_name", "Jeremy Wiseman"),
+            ("display_name", "Jeremy Wiseman"),
+        ],
+    },
+    {
+        "display_name":   "Richard Renwick",
+        "pdf_name":       "RENWICK, RICHARD",
+        "pdf_id":         "E8041",
+        "centerline_id":  8041,
+        "assignment":     config.ASSIGNMENT_BILLABLE,
+        "aliases": [
+            ("pdf_name",    "RENWICK, RICHARD"),
+            ("travel_name", "Rick Renwick"),
+            ("travel_name", "Richard Renwick"),
+            ("display_name", "Richard Renwick"),
         ],
     },
     # ---- Internal employees (bypass customer approval) ----

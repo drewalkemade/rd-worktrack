@@ -206,31 +206,38 @@ payroll_app/
 
 ## Known Employees (confirmed from PDF parsing, 2026-04-14)
 
-| Display Name       | PDF Name            | PDF ID | Centerline ID | Type      |
-|--------------------|---------------------|--------|---------------|-----------|
-| Jeremy Atkinson    | ATKINSON, JEREMY    | E8022  | 8022          | Billable  |
-| Jeremy Wiseman     | WISEMAN, JEREMY     | E8031  | 8031          | Billable  |
-| Richard Renwick    | RENWICK, RICHARD    | E8041  | 8041          | Billable  |
-| Jerry Jeremias     | JEREMIAS, JERRY     | E8174  | 8174          | Billable  |
-| Daniel Trif        | TRIF, DANIEL        | E8190  | 8190          | Billable  |
-| Zachary Ebbinghaus | EBBINGHAUS, ZACHARY | E8395  | 8395          | Billable  |
-| Jarrett Zorzi      | ZORZI, JARRETT      | E8611  | 8611          | Billable  |
-| Florin Moldovan    | MOLDOVAN, FLORIN    | E8650  | 8650          | Billable  |
-| Yousof Saleh       | SALEH, YOUSOF       | E8668  | 8668          | Billable  |
-| Henry Andkilde     | (none)              | —      | —             | Internal  |
-| Matina Rahbar      | (none)              | —      | —             | Internal  |
+| Display Name       | PDF Name            | PDF ID | Centerline ID | Type      | Notes                          |
+|--------------------|---------------------|--------|---------------|-----------|--------------------------------|
+| Jeremy Atkinson    | ATKINSON, JEREMY    | E8022  | 8022          | Billable  | No R&D timesheet               |
+| Jeremy Wiseman     | WISEMAN, JEREMY     | E8031  | 8031          | Billable  | No R&D timesheet               |
+| Richard Renwick    | RENWICK, RICHARD    | E8041  | 8041          | Billable  | No R&D timesheet               |
+| Jerry Jeremias     | JEREMIAS, JERRY     | E8174  | 8174          | Billable  |                                |
+| Daniel Trif        | TRIF, DANIEL        | E8190  | 8190          | Billable  |                                |
+| Zachary Ebbinghaus | EBBINGHAUS, ZACHARY | E8395  | 8395          | Billable  |                                |
+| Jarrett Zorzi      | ZORZI, JARRETT      | E8611  | 8611          | Billable  |                                |
+| Florin Moldovan    | MOLDOVAN, FLORIN    | E8650  | 8650          | Billable  |                                |
+| Yousof Saleh       | SALEH, YOUSOF       | E8668  | 8668          | Billable  |                                |
+| Paul Robertson     | ROBERTSON, PAUL     | E8473  | 8473          | Billable  | Active Dec 2025 – Mar 2026     |
+| Henry Andkilde     | (none)              | —      | —             | Internal  |                                |
+| Matina Rahbar      | (none)              | —      | —             | Internal  |                                |
 
-Note: Atkinson, Wiseman, Renwick appear in the Centerline PDF but have no timesheets
-in `example/` — the system must not assume all PDF employees have submitted timesheets.
+Note: Atkinson, Wiseman, Renwick appear in the Centerline PDF but do not submit timesheets to R&D.
+The system must not assume all PDF employees have timesheets.
+
+Travel notes:
+- Some weeks have no travel PDF — this is normal. Travel defaults to 0 / `n/a`.
+- When no travel PDF is available, the owner can use `assume_travel_from_timesheet()` to
+  set travel from the employee's timesheet drive hours.  A note is required.
+- Travel naming convention: `R&D_YYMMDD-Travel.pdf` where YYMMDD is the Sunday (start of Sun-Sat range).
 
 ---
 
 ## Implementation Priorities
 
 - **Phase 1** ✓ DONE — schema, source-file ingestion, workbook validation gate, extractor rewrites, regression tests
-- **Phase 2** ✓ DONE — importer, weekly verifier, reconciler, payroll writer, expense exporter, receipt tracking (178 tests)
-- **Phase 3** ← CURRENT — Streamlit UI (app.py scaffolded; Dashboard, Import, Weekly Verification pages built and running)
-- **Phase 4** — template improvements, richer reporting, optional lateness/exception hooks, receipt-image polish, audit coverage, multi-customer hooks
+- **Phase 2** ✓ DONE — importer, weekly verifier, reconciler, payroll writer, expense exporter, receipt tracking; post-phase additions: travel reclassification, assume_travel_from_timesheet(), extraction log, Paul Robertson, bulk_import.py (198 tests total)
+- **Phase 3** ✓ DONE — all 7 Streamlit pages: Dashboard, Import, Weekly Verification, Reconcile (with invoice table + CSV export), Expenses, Employees, Reports (payroll export + receipt backlog)
+- **Phase 4** ← CURRENT — workboard UI (n8n-style single page per pay period), template improvements, richer reporting, receipt-image polish, audit coverage, multi-customer hooks
 
 The weekly verification workflow is not optional and should not be deferred behind cosmetic UI work.
 

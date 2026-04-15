@@ -83,7 +83,13 @@ class TestProfitTrackerWriter:
         )
         assert result.success is True
         assert result.dry_run is True
-        assert result.employees_written == 6   # 6 known employees
+        # employees_written must equal the number imported from the PDF — roster-independent
+        approved_count = db.fetch_one(
+            conn,
+            "SELECT COUNT(*) AS n FROM customer_hours WHERE weekly_approval_id = ?",
+            (wa_id,),
+        )["n"]
+        assert result.employees_written == approved_count
         # File should NOT have been created in dry_run mode
         assert not (tmp_path / "profit.xlsx").exists()
 
@@ -118,8 +124,13 @@ class TestProfitTrackerWriter:
         ws = wb["RawData"]
         # Count non-empty rows after header
         data_rows = [r for r in range(2, ws.max_row + 1) if ws.cell(row=r, column=1).value]
-        # Should have exactly 6 rows (one per employee), not 12
-        assert len(data_rows) == 6
+        # Row count must equal the approved employee count — re-run must not append rows
+        approved_count = db.fetch_one(
+            conn,
+            "SELECT COUNT(*) AS n FROM customer_hours WHERE weekly_approval_id = ?",
+            (wa_id,),
+        )["n"]
+        assert len(data_rows) == approved_count
 
     def test_nonexistent_approval_returns_error(self, conn, tmp_path):
         result = write_rawdata_week(conn, weekly_approval_id=9999, workbook_path=tmp_path / "x.xlsx")

@@ -72,6 +72,9 @@ class ImportResult:
     skipped_count: int               # number of employee rows that could not be resolved
     warnings: list[str]
     errors: list[str]
+    extraction_log: list[str] = dataclasses.field(default_factory=list)
+    # Human-readable line-by-line log of what was extracted.
+    # Each entry is one line; the UI renders these in a monospace block.
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +495,7 @@ def import_payroll_pdf(
     # 4. Upsert customer_hours for each employee
     employee_count = 0
     skipped_count = 0
+    log_lines: list[str] = []
 
     for emp_data in employees:
         pdf_name = emp_data["pdf_name"]  # e.g. "TRIF, DANIEL"
@@ -501,6 +505,7 @@ def import_payroll_pdf(
 
         if employee_id is None:
             skipped_count += 1
+            log_lines.append(f"  SKIP  {pdf_name} — no employee match")
             continue
 
         conn.execute(
@@ -524,6 +529,30 @@ def import_payroll_pdf(
             ),
         )
         employee_count += 1
+        # Fetch display name for the log
+        emp_row = db.fetch_one(conn, "SELECT display_name FROM employees WHERE id = ?", (employee_id,))
+        display = emp_row["display_name"] if emp_row else pdf_name
+        log_lines.append(
+            f"  OK    {pdf_name} → {display}:"
+            f"  REG={emp_data['reg_hours']:.2f}"
+            f"  OT={emp_data['ot_hours']:.2f}"
+            f"  DBL={emp_data['dbl_hours']:.2f}"
+        )
+
+    # Build the period info for the header
+    period_row = db.fetch_one(conn, "SELECT period_start, period_end FROM pay_periods WHERE id = ?", (pay_period_id,))
+    period_hdr = ""
+    if period_row:
+        period_hdr = f"  Period: {period_row['period_start']} – {period_row['period_end']}  (Week {week_number})"
+
+    extraction_log = [
+        f"Payroll PDF: {orig_name}",
+        f"  Week ending: {week_ending}",
+        period_hdr,
+        f"  Weekly approval ID: {weekly_approval_id}",
+        f"",
+        f"  Employees: {employee_count} imported, {skipped_count} skipped",
+    ] + log_lines
 
     db.log_audit(
         conn,
@@ -546,6 +575,7 @@ def import_payroll_pdf(
         skipped_count=skipped_count,
         warnings=warnings,
         errors=errors,
+        extraction_log=extraction_log,
     )
 
 
@@ -679,6 +709,7 @@ def import_travel_pdf(
     # 5. Upsert travel_hours for each R&D employee
     employee_count = 0
     skipped_count  = 0
+    log_lines: list[str] = []
 
     for row in travel_rows:
         raw_name = row["raw_name"]
@@ -688,6 +719,7 @@ def import_travel_pdf(
 
         if employee_id is None:
             skipped_count += 1
+            log_lines.append(f"  SKIP  {raw_name} — no employee match")
             continue
 
         # Sun_hours = the PDF Sunday, which belongs to the PRIOR week
@@ -729,6 +761,7 @@ def import_travel_pdf(
         )
 
         # Mark prior_week_sun_applied on the current row if Sunday hours are non-zero
+        sun_applied = False
         if sun_hours > 0:
             applied = _apply_travel_sunday_to_prior_week(
                 conn, employee_id, sun_hours, pdf_sunday, source_file_id
@@ -742,8 +775,34 @@ def import_travel_pdf(
                     """,
                     (weekly_approval_id, employee_id),
                 )
+                sun_applied = True
 
         employee_count += 1
+        emp_row = db.fetch_one(conn, "SELECT display_name FROM employees WHERE id = ?", (employee_id,))
+        display = emp_row["display_name"] if emp_row else raw_name
+        sun_note = ""
+        if sun_hours > 0:
+            sun_note = f"  Sun(prior)={sun_hours:.2f}h {'→ applied' if sun_applied else '→ no prior week found'}"
+        log_lines.append(
+            f"  OK    {raw_name} → {display}:"
+            f"  Mon-Sat={current_week_total:.2f}h"
+            + sun_note
+        )
+
+    period_row = db.fetch_one(conn, "SELECT period_start, period_end FROM pay_periods WHERE id = ?", (pay_period_id,))
+    period_hdr = ""
+    if period_row:
+        period_hdr = f"  Period: {period_row['period_start']} – {period_row['period_end']}  (Week {week_number})"
+
+    extraction_log = [
+        f"Travel PDF: {orig_name}",
+        f"  Date range: {pdf_sunday} (Sun) – {saturday_date} (Sat)",
+        f"  Current week ending: {current_week_ending}",
+        period_hdr,
+        f"  Weekly approval ID: {weekly_approval_id}",
+        f"",
+        f"  Employees: {employee_count} imported, {skipped_count} skipped",
+    ] + log_lines
 
     db.log_audit(
         conn,
@@ -766,6 +825,7 @@ def import_travel_pdf(
         skipped_count=skipped_count,
         warnings=warnings,
         errors=errors,
+        extraction_log=extraction_log,
     )
 
 
@@ -853,33 +913,43 @@ def import_timesheet(
 
     # 3. Resolve employee
     # Timesheets use the employee's display name from cell H3.
-    # Try display_name aliases first; if not found, search all alias types because
-    # the same name may be registered under travel_name or another type.
+    # Resolution order:
+    #   a. Exact match on display_name alias
+    #   b. Exact match on any alias type (catches travel_name = display name)
+    #   c. Fuzzy match across all alias types (last resort, score >= 80)
+    # Warnings are only emitted if the final resolution fails or uses a fuzzy match.
     employee_name = ts_data["employee_name"]
-    employee_id, emp_warnings = _resolve_employee(conn, employee_name, alias_type="display_name")
-    warnings.extend(emp_warnings)
 
-    if employee_id is None:
-        # Broaden the search to all alias types
-        emp_warnings_broad: list[str] = []
+    # Step a — exact display_name alias
+    emp = employee_manager.find_employee_by_alias(conn, employee_name, alias_type="display_name")
+    if emp:
+        employee_id = emp["id"]
+    else:
+        employee_id = None
+
+        # Step b — exact match on any alias type
         emp = employee_manager.find_employee_by_alias(conn, employee_name, alias_type=None)
         if emp:
             employee_id = emp["id"]
         else:
-            # Last resort: fuzzy match across all alias types
+            # Step c — fuzzy match across all alias types
             emp, score, is_ambiguous = employee_manager.fuzzy_find_employee(
                 conn, employee_name, alias_type=None, min_score=80
             )
             if is_ambiguous:
-                emp_warnings_broad.append(
-                    f"Ambiguous broad match for {employee_name!r} (score={score}) — skipped."
+                warnings.append(
+                    f"Ambiguous match for {employee_name!r} (score={score}): "
+                    "multiple candidates within 5 points — skipped."
                 )
             elif emp:
                 employee_id = emp["id"]
-                emp_warnings_broad.append(
-                    f"Broad fuzzy match: {employee_name!r} → {emp['display_name']!r} (score={score})"
+                warnings.append(
+                    f"Fuzzy match: {employee_name!r} → {emp['display_name']!r} (score={score})"
                 )
-        warnings.extend(emp_warnings_broad)
+            else:
+                warnings.append(
+                    f"No employee match for {employee_name!r} — skipped."
+                )
 
     if employee_id is None:
         errors.append(
@@ -1037,6 +1107,51 @@ def import_timesheet(
         ),
     )
 
+    # Build extraction log
+    period_row = db.fetch_one(conn, "SELECT period_start, period_end FROM pay_periods WHERE id = ?", (pay_period_id,))
+    period_hdr = f"  Period: {period_row['period_start']} – {period_row['period_end']}" if period_row else ""
+
+    emp_row = db.fetch_one(conn, "SELECT display_name FROM employees WHERE id = ?", (employee_id,))
+    display_name = emp_row["display_name"] if emp_row else employee_name
+
+    exp_cad_total = sum(float(e.get("amount", 0)) for e in expenses_cad)
+    exp_usd_total = sum(float(e.get("amount", 0)) for e in expenses_usd)
+
+    extraction_log = [
+        f"Timesheet: {orig_name}",
+        f"  Employee: {employee_name} → {display_name}",
+        period_hdr,
+        f"  Timesheet import ID: {timesheet_import_id}",
+        f"",
+        f"  Biweekly totals:",
+        f"    REG={totals.get('reg_hours', 0.0):.2f}"
+        f"  OT={totals.get('ot1_hours', 0.0):.2f}"
+        f"  OT2={totals.get('ot2_hours', 0.0):.2f}"
+        f"  Drive={totals.get('drive_hours', 0.0):.2f}",
+        f"    Sick={totals.get('sick_hours', 0.0):.2f}"
+        f"  Vacation={totals.get('vacation_hours', 0.0):.2f}"
+        f"  Holiday={totals.get('holiday_hours', 0.0):.2f}",
+        f"  Daily rows stored: {len(daily_hours)}",
+    ]
+
+    if expenses_cad:
+        extraction_log.append(f"  Expenses CAD: {len(expenses_cad)} item(s)  total={exp_cad_total:.2f}")
+        for e in expenses_cad:
+            extraction_log.append(
+                f"    {e.get('work_date') or 'undated':>10}  {e.get('category','?'):20}  {float(e.get('amount',0)):.2f}"
+            )
+    else:
+        extraction_log.append("  Expenses CAD: none")
+
+    if expenses_usd:
+        extraction_log.append(f"  Expenses USD: {len(expenses_usd)} item(s)  total={exp_usd_total:.2f}")
+        for e in expenses_usd:
+            extraction_log.append(
+                f"    {e.get('work_date') or 'undated':>10}  {e.get('category','?'):20}  {float(e.get('amount',0)):.2f}"
+            )
+    else:
+        extraction_log.append("  Expenses USD: none")
+
     return ImportResult(
         success=True,
         source_file_id=source_file_id,
@@ -1047,6 +1162,7 @@ def import_timesheet(
         skipped_count=0,
         warnings=warnings,
         errors=errors,
+        extraction_log=extraction_log,
     )
 
 

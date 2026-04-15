@@ -197,23 +197,103 @@ def _sum_approved_hours(
     }
 
 
-def _sum_approved_travel(
+def _sum_approved_travel_by_type(
     conn: Any,
     pay_period_id: int,
     employee_id: int,
-) -> float:
-    """Sum confirmed travel hours (Mon–Sat per week) across both weekly_approvals."""
+) -> tuple[float, float]:
+    """Sum travel hours split into Sunday vs non-Sunday, across both weekly_approvals.
+
+    Non-Sunday hours come from current_week_total (Mon–Sat).
+    Sunday hours come from current_sun_hours_assumed when the status is 'confirmed'
+    or 'assumed_from_timesheet' — 'pending_next_pdf' is excluded because those hours
+    are not yet confirmed for payroll.
+
+    Returns:
+        (sun_hours, non_sun_hours)
+    """
     rows = db.fetch_all(
         conn,
         """
-        SELECT th.current_week_total
+        SELECT th.current_week_total, th.current_sun_hours_assumed, th.current_sun_status
         FROM travel_hours th
         JOIN weekly_approvals wa ON wa.id = th.weekly_approval_id
         WHERE wa.pay_period_id = ? AND th.employee_id = ?
         """,
         (pay_period_id, employee_id),
     )
-    return sum(float(r["current_week_total"] or 0) for r in rows)
+    sun_total     = 0.0
+    non_sun_total = 0.0
+    for r in rows:
+        non_sun_total += float(r["current_week_total"] or 0)
+        if r["current_sun_status"] in ("confirmed", "assumed_from_timesheet"):
+            sun_total += float(r["current_sun_hours_assumed"] or 0)
+    return sun_total, non_sun_total
+
+
+def _reclassify_travel(
+    approved_reg: float,
+    approved_ot: float,
+    approved_dbl: float,
+    travel_sun: float,
+    travel_non_sun: float,
+) -> tuple[float, float, float, float]:
+    """Apply travel-time reclassification to produce final payroll hours.
+
+    Travel hours are paid at the regular rate and are not additional time — they
+    displace premium hours:
+
+      - Non-Sunday travel displaces OT first, then reg.
+      - Sunday travel displaces DT first, then OT, then reg.
+
+    This mirrors the manual reclassification the owner currently does before
+    entering hours into the payroll workbook.  The Centerline PDF does NOT
+    pre-reclassify, so this step is always R&D's responsibility.
+
+    Example:
+        approved_reg=40, approved_ot=4, approved_dbl=0, travel_non_sun=8
+        → final_reg=36, final_ot=0, final_dbl=0, final_drive=8
+
+    Args:
+        approved_reg:   Customer-approved regular hours.
+        approved_ot:    Customer-approved overtime hours.
+        approved_dbl:   Customer-approved double-time hours.
+        travel_sun:     Confirmed Sunday travel hours (displaces DT → OT → reg).
+        travel_non_sun: Confirmed Mon–Sat travel hours (displaces OT → reg).
+
+    Returns:
+        (final_reg, final_ot, final_dbl, final_drive)
+    """
+    reg = approved_reg
+    ot  = approved_ot
+    dbl = approved_dbl
+
+    # Sunday travel: displaces DT → OT → reg
+    remaining = travel_sun
+    if remaining > 0:
+        take = min(remaining, dbl)
+        dbl -= take
+        remaining -= take
+    if remaining > 0:
+        take = min(remaining, ot)
+        ot -= take
+        remaining -= take
+    if remaining > 0:
+        take = min(remaining, reg)
+        reg -= take
+
+    # Non-Sunday travel: displaces OT → reg
+    remaining = travel_non_sun
+    if remaining > 0:
+        take = min(remaining, ot)
+        ot -= take
+        remaining -= take
+    if remaining > 0:
+        take = min(remaining, reg)
+        reg -= take
+
+    final_drive = travel_sun + travel_non_sun
+    return reg, ot, dbl, final_drive
 
 
 def _get_timesheet_totals(
@@ -375,7 +455,8 @@ def run_reconciliation(
 
         ts    = _get_timesheet_totals(conn, pay_period_id, employee_id)
         cust  = _sum_approved_hours(conn, pay_period_id, employee_id)
-        cust_drive = _sum_approved_travel(conn, pay_period_id, employee_id)
+        travel_sun, travel_non_sun = _sum_approved_travel_by_type(conn, pay_period_id, employee_id)
+        cust_drive = travel_sun + travel_non_sun
 
         if assignment_type == config.ASSIGNMENT_INTERNAL:
             # Internal employees: final values = timesheet (no customer sign-off)
@@ -387,11 +468,12 @@ def run_reconciliation(
             cust = {"reg": 0.0, "ot": 0.0, "dbl": 0.0}
             cust_drive  = 0.0
         else:
-            # Billable employees: final values = customer-approved
-            final_reg   = cust["reg"]
-            final_ot    = cust["ot"]
-            final_dbl   = cust["dbl"]
-            final_drive = cust_drive
+            # Billable employees: reclassify travel into final payroll hours.
+            # Travel is at regular rate and displaces premium time — see _reclassify_travel.
+            final_reg, final_ot, final_dbl, final_drive = _reclassify_travel(
+                cust["reg"], cust["ot"], cust["dbl"],
+                travel_sun, travel_non_sun,
+            )
 
         # Variance check (billable only — compare approved vs submitted)
         has_variance = False

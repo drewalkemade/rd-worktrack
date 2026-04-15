@@ -18,7 +18,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import streamlit as st
 
-from payroll_app.database import db
+from payroll_app.database import db, employee_manager
 
 st.set_page_config(page_title="Dashboard — R&D Controls", layout="wide")
 
@@ -233,3 +233,68 @@ if recent_audit:
         st.dataframe(rows, use_container_width=True, hide_index=True)
 else:
     st.info("No audit activity recorded yet.")
+
+# ---------------------------------------------------------------------------
+# Danger Zone
+# ---------------------------------------------------------------------------
+
+st.divider()
+
+with st.expander("⚠️ Danger Zone", expanded=False):
+    st.error(
+        "**This action is irreversible.**\n\n"
+        "Clicking **Clear Database** will permanently delete ALL operational data from the "
+        "database, including: pay periods, weekly approvals, customer hours, travel hours, "
+        "timesheet imports, timesheet hours, weekly verification records, reconciliation "
+        "records, expense items, expense receipts, audit log entries, and source file "
+        "registrations.  Employee identity tables (employees, aliases, assignments) will "
+        "also be wiped and then re-seeded from the built-in roster.\n\n"
+        "Use this only to reset a test/development database to a clean state."
+    )
+
+    confirm_text = st.text_input(
+        "Type CLEAR to confirm",
+        value="",
+        placeholder="CLEAR",
+        key="danger_zone_confirm",
+    )
+
+    wipe_enabled = confirm_text == "CLEAR"
+
+    if st.button("Clear Database", type="primary", disabled=not wipe_enabled):
+        _wipe_conn = db.get_connection()
+        try:
+            # Delete in FK-safe order (children before parents)
+            _tables_to_delete = [
+                "audit_log",
+                "source_file_edits",
+                "expense_receipts",
+                "expense_items",
+                "reconciliation",
+                "travel_hours",
+                "weekly_employee_verification",
+                "customer_hours",
+                "weekly_approvals",
+                "timesheet_daily_hours",
+                "timesheet_hours",
+                "timesheet_imports",
+                "pay_periods",
+                "source_files",
+                "employee_rates",
+                "employee_assignments",
+                "employee_aliases",
+                "employees",
+            ]
+            for _table in _tables_to_delete:
+                _wipe_conn.execute(f"DELETE FROM {_table}")
+
+            db.initialize_database(_wipe_conn)
+            employee_manager.seed_employees(_wipe_conn)
+            _wipe_conn.commit()
+            st.success("Database cleared and employees re-seeded.")
+            st.rerun()
+        except Exception as _exc:
+            _wipe_conn.rollback()
+            st.error(f"Database wipe failed and was rolled back: {_exc}")
+        finally:
+            _wipe_conn.close()

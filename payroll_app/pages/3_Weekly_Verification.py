@@ -105,13 +105,28 @@ def _approval_label(wa) -> str:
     )
 
 approval_options = {_approval_label(wa): wa["id"] for wa in weekly_approvals}
+option_labels = list(approval_options.keys())
+
+# Persist the selected weekly approval across reruns (e.g. after marking verified).
+# Without this, st.rerun() resets the selectbox to index 0 (most recent week).
+if "selected_wa_id" not in st.session_state:
+    st.session_state["selected_wa_id"] = approval_options[option_labels[0]]
+
+# Find the index of the currently selected wa_id in the current option list.
+# If it's no longer present (e.g. after a DB change), fall back to 0.
+current_wa_id = st.session_state["selected_wa_id"]
+id_to_label = {v: k for k, v in approval_options.items()}
+current_label = id_to_label.get(current_wa_id, option_labels[0])
+current_index = option_labels.index(current_label) if current_label in option_labels else 0
 
 selected_label = st.selectbox(
     "Select a weekly approval",
-    options=list(approval_options.keys()),
+    options=option_labels,
+    index=current_index,
     key="wa_selector",
 )
 selected_wa_id = approval_options[selected_label]
+st.session_state["selected_wa_id"] = selected_wa_id
 
 # Show which source files back this approval
 conn = db.get_connection()
@@ -329,6 +344,19 @@ for row in verif_rows:
         # --- Drive hours ---
         if row.timesheet_week_drive > 0:
             st.caption(f"Drive hours (timesheet): {row.timesheet_week_drive:.2f}")
+
+        # --- Non-billable time types (vacation / sick / holiday / non-billable) ---
+        # These have no customer-approved counterpart so they are informational only.
+        non_billable_types = [
+            ("Sick",         row.timesheet_week_sick),
+            ("Vacation",     row.timesheet_week_vacation),
+            ("Holiday",      row.timesheet_week_holiday),
+            ("Non-billable", row.timesheet_week_nonbillable),
+        ]
+        non_zero = [(label, val) for label, val in non_billable_types if val > 0]
+        if non_zero:
+            parts = "  |  ".join(f"{label}: {val:.2f}" for label, val in non_zero)
+            st.caption(f"Non-billable time: {parts}")
 
         # --- Travel Sunday status ---
         sun_label = _SUN_STATUS_LABEL.get(row.travel_sun_status, row.travel_sun_status)

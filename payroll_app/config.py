@@ -83,6 +83,27 @@ ASSIGNMENT_BILLABLE  = "billable"
 # Employees that bypass customer approval (internal-only payroll)
 INTERNAL_EMPLOYEE_DISPLAY_NAMES = {"Henry Andkilde", "Matina Rahbar"}
 
+# ---------------------------------------------------------------------------
+# Centerline invoice rates and item codes
+# ---------------------------------------------------------------------------
+
+CENTERLINE_RATE_REG     = 72.00
+CENTERLINE_RATE_OT1     = 93.60
+CENTERLINE_RATE_OT2     = 122.40
+CENTERLINE_RATE_TRAVEL  = 72.00
+CENTERLINE_RATE_PERDIEM = 70.00    # per day
+
+INVOICE_ITEM_REG        = "005-1-2026-001"
+INVOICE_ITEM_OT1        = "005-1-2026-002"
+INVOICE_ITEM_OT2        = "005-1-2026-003"
+INVOICE_ITEM_TRAVEL     = "005-1-2026-100"
+INVOICE_ITEM_PERDIEM    = "005-0-2025-101"
+INVOICE_ITEM_EXPENSE    = "005-0-2025-102"
+
+HST_RATE                = 0.13     # 13% Ontario HST
+
+# ---------------------------------------------------------------------------
+
 # Per-diem does not require a receipt — all other expense categories do
 PER_DIEM_CATEGORIES = {"per_diem_travel", "per_diem_full"}
 

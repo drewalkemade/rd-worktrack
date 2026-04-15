@@ -66,10 +66,14 @@ class EmployeeVerification:
     employee_id:           int
     display_name:          str
     # Timesheet hours for this specific week (Mon–Sun span)
-    timesheet_week_reg:    float
-    timesheet_week_ot1:    float
-    timesheet_week_ot2:    float
-    timesheet_week_drive:  float
+    timesheet_week_reg:          float
+    timesheet_week_ot1:          float
+    timesheet_week_ot2:          float
+    timesheet_week_drive:        float
+    timesheet_week_sick:         float
+    timesheet_week_vacation:     float
+    timesheet_week_holiday:      float
+    timesheet_week_nonbillable:  float
     # Customer-approved hours for this week
     approved_reg:          float
     approved_ot:           float
@@ -133,9 +137,13 @@ def _sum_timesheet_hours_for_week(
     Looks up the timesheet_import for (pay_period_id, employee_id), then
     sums timesheet_daily_hours rows where work_date falls in [week_start, week_end].
 
-    Returns a dict with keys: reg, ot1, ot2, drive (zero if no timesheet found).
+    Returns a dict with keys: reg, ot1, ot2, drive, sick, vacation, holiday,
+    nonbillable (zero for all if no timesheet found).
     """
-    empty = {"reg": 0.0, "ot1": 0.0, "ot2": 0.0, "drive": 0.0}
+    empty = {
+        "reg": 0.0, "ot1": 0.0, "ot2": 0.0, "drive": 0.0,
+        "sick": 0.0, "vacation": 0.0, "holiday": 0.0, "nonbillable": 0.0,
+    }
 
     ts_import = db.fetch_one(
         conn,
@@ -148,7 +156,8 @@ def _sum_timesheet_hours_for_week(
     rows = db.fetch_all(
         conn,
         """
-        SELECT reg_hours, ot1_hours, ot2_hours, drive_hours
+        SELECT reg_hours, ot1_hours, ot2_hours, drive_hours,
+               sick_hours, vacation_hours, holiday_hours, nonbillable_hours
         FROM timesheet_daily_hours
         WHERE timesheet_import_id = ?
           AND work_date BETWEEN ? AND ?
@@ -157,10 +166,14 @@ def _sum_timesheet_hours_for_week(
     )
 
     return {
-        "reg":   sum(r["reg_hours"]   for r in rows),
-        "ot1":   sum(r["ot1_hours"]   for r in rows),
-        "ot2":   sum(r["ot2_hours"]   for r in rows),
-        "drive": sum(r["drive_hours"] for r in rows),
+        "reg":         sum(r["reg_hours"]         for r in rows),
+        "ot1":         sum(r["ot1_hours"]         for r in rows),
+        "ot2":         sum(r["ot2_hours"]         for r in rows),
+        "drive":       sum(r["drive_hours"]       for r in rows),
+        "sick":        sum(r["sick_hours"]        for r in rows),
+        "vacation":    sum(r["vacation_hours"]    for r in rows),
+        "holiday":     sum(r["holiday_hours"]     for r in rows),
+        "nonbillable": sum(r["nonbillable_hours"] for r in rows),
     }
 
 
@@ -457,21 +470,27 @@ def run_weekly_verification(
                  timesheet_week_reg, timesheet_week_ot1, timesheet_week_ot2, timesheet_week_drive,
                  approved_reg, approved_ot, approved_dbl, approved_travel,
                  needs_expense_review, simple_per_diem_count, extra_expense_note,
-                 status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status,
+                 timesheet_week_sick, timesheet_week_vacation,
+                 timesheet_week_holiday, timesheet_week_nonbillable)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(weekly_approval_id, employee_id) DO UPDATE SET
-                timesheet_week_reg   = excluded.timesheet_week_reg,
-                timesheet_week_ot1   = excluded.timesheet_week_ot1,
-                timesheet_week_ot2   = excluded.timesheet_week_ot2,
-                timesheet_week_drive = excluded.timesheet_week_drive,
-                approved_reg         = excluded.approved_reg,
-                approved_ot          = excluded.approved_ot,
-                approved_dbl         = excluded.approved_dbl,
-                approved_travel      = excluded.approved_travel,
-                needs_expense_review = excluded.needs_expense_review,
-                simple_per_diem_count = excluded.simple_per_diem_count,
-                extra_expense_note   = excluded.extra_expense_note,
-                status               = excluded.status
+                timesheet_week_reg         = excluded.timesheet_week_reg,
+                timesheet_week_ot1         = excluded.timesheet_week_ot1,
+                timesheet_week_ot2         = excluded.timesheet_week_ot2,
+                timesheet_week_drive       = excluded.timesheet_week_drive,
+                approved_reg               = excluded.approved_reg,
+                approved_ot                = excluded.approved_ot,
+                approved_dbl               = excluded.approved_dbl,
+                approved_travel            = excluded.approved_travel,
+                needs_expense_review       = excluded.needs_expense_review,
+                simple_per_diem_count      = excluded.simple_per_diem_count,
+                extra_expense_note         = excluded.extra_expense_note,
+                status                     = excluded.status,
+                timesheet_week_sick        = excluded.timesheet_week_sick,
+                timesheet_week_vacation    = excluded.timesheet_week_vacation,
+                timesheet_week_holiday     = excluded.timesheet_week_holiday,
+                timesheet_week_nonbillable = excluded.timesheet_week_nonbillable
             """,
             (
                 weekly_approval_id,
@@ -488,6 +507,10 @@ def run_weekly_verification(
                 per_diem_count,
                 extra_note,
                 status,
+                ts_hours["sick"],
+                ts_hours["vacation"],
+                ts_hours["holiday"],
+                ts_hours["nonbillable"],
             ),
         )
 
@@ -563,29 +586,163 @@ def get_verification_status(
         ts_ot2       = float(row["timesheet_week_ot2"] or 0)
 
         result.append(EmployeeVerification(
-            employee_id           = row["employee_id"],
-            display_name          = row["display_name"],
-            timesheet_week_reg    = float(row["timesheet_week_reg"]   or 0),
-            timesheet_week_ot1    = float(row["timesheet_week_ot1"]   or 0),
-            timesheet_week_ot2    = float(row["timesheet_week_ot2"]   or 0),
-            timesheet_week_drive  = float(row["timesheet_week_drive"] or 0),
-            approved_reg          = float(row["approved_reg"]         or 0),
-            approved_ot           = approved_ot,
-            approved_dbl          = approved_dbl,
-            approved_travel       = float(row["approved_travel"]      or 0),
-            reg_variance          = float(row["approved_reg"] or 0) - float(row["timesheet_week_reg"] or 0),
-            ot_variance           = approved_ot  - ts_ot1,
-            dbl_variance          = approved_dbl - ts_ot2,
-            needs_expense_review  = bool(row["needs_expense_review"]),
-            simple_per_diem_count = float(row["simple_per_diem_count"] or 0),
-            extra_expense_note    = row["extra_expense_note"],
-            travel_sun_status     = sun_status,
-            travel_sun_hours      = sun_hours,
-            status                = row["status"],
-            verified_at           = row["verified_at"],
+            employee_id                = row["employee_id"],
+            display_name               = row["display_name"],
+            timesheet_week_reg         = float(row["timesheet_week_reg"]         or 0),
+            timesheet_week_ot1         = float(row["timesheet_week_ot1"]         or 0),
+            timesheet_week_ot2         = float(row["timesheet_week_ot2"]         or 0),
+            timesheet_week_drive       = float(row["timesheet_week_drive"]       or 0),
+            timesheet_week_sick        = float(row["timesheet_week_sick"]        or 0),
+            timesheet_week_vacation    = float(row["timesheet_week_vacation"]    or 0),
+            timesheet_week_holiday     = float(row["timesheet_week_holiday"]     or 0),
+            timesheet_week_nonbillable = float(row["timesheet_week_nonbillable"] or 0),
+            approved_reg               = float(row["approved_reg"]               or 0),
+            approved_ot                = approved_ot,
+            approved_dbl               = approved_dbl,
+            approved_travel            = float(row["approved_travel"]            or 0),
+            reg_variance               = float(row["approved_reg"] or 0) - float(row["timesheet_week_reg"] or 0),
+            ot_variance                = approved_ot  - ts_ot1,
+            dbl_variance               = approved_dbl - ts_ot2,
+            needs_expense_review       = bool(row["needs_expense_review"]),
+            simple_per_diem_count      = float(row["simple_per_diem_count"]      or 0),
+            extra_expense_note         = row["extra_expense_note"],
+            travel_sun_status          = sun_status,
+            travel_sun_hours           = sun_hours,
+            status                     = row["status"],
+            verified_at                = row["verified_at"],
         ))
 
     return result
+
+
+def assume_travel_from_timesheet(
+    conn: Any,
+    weekly_approval_id: int,
+    employee_id: int,
+    *,
+    note: str | None = None,
+) -> None:
+    """Record that travel hours for this employee/week are assumed from their timesheet.
+
+    Used when Centerline does not provide a travel PDF for the week.  The
+    employee's timesheet drive hours become the travel total for reconciliation
+    purposes.  Sets current_sun_status = 'assumed_from_timesheet' on the
+    travel_hours row (creating a skeleton row if none exists).
+
+    Non-Sunday drive hours (Mon–Sat) are copied from the timesheet to
+    current_week_total.  The owner must supply a note explaining why no travel
+    PDF was available.
+
+    Args:
+        conn:                Open database connection.  Caller commits.
+        weekly_approval_id:  weekly_approvals.id
+        employee_id:         employees.id
+        note:                Required — reason travel PDF was not available.
+
+    Raises:
+        ValueError if the weekly_approval or employee does not exist, or if
+        the employee has no timesheet drive hours to draw from.
+    """
+    if not note or not note.strip():
+        raise ValueError("A note is required when assuming travel from timesheet.")
+
+    wa = db.fetch_one(
+        conn,
+        "SELECT id, pay_period_id, week_ending FROM weekly_approvals WHERE id = ?",
+        (weekly_approval_id,),
+    )
+    if not wa:
+        raise ValueError(f"weekly_approval_id={weekly_approval_id} not found.")
+
+    pay_period_id = wa["pay_period_id"]
+    week_ending   = date.fromisoformat(wa["week_ending"])
+    week_start, week_end = _week_date_range(week_ending)
+
+    # Sum timesheet drive hours for this Mon–Sun window
+    ts_import = db.fetch_one(
+        conn,
+        "SELECT id FROM timesheet_imports WHERE pay_period_id = ? AND employee_id = ?",
+        (pay_period_id, employee_id),
+    )
+    if not ts_import:
+        raise ValueError(
+            f"No timesheet found for employee_id={employee_id}, "
+            f"pay_period_id={pay_period_id}.  Cannot assume travel from timesheet."
+        )
+
+    drive_rows = db.fetch_all(
+        conn,
+        """
+        SELECT work_date, drive_hours
+        FROM timesheet_daily_hours
+        WHERE timesheet_import_id = ?
+          AND work_date BETWEEN ? AND ?
+          AND drive_hours > 0
+        """,
+        (ts_import["id"], str(week_start), str(week_end)),
+    )
+
+    # Separate Sunday from Mon–Sat
+    sun_date = str(week_end)     # week_end IS the Sunday
+    mon_sat_total = 0.0
+    sun_total     = 0.0
+    for row in drive_rows:
+        if row["work_date"] == sun_date:
+            sun_total += float(row["drive_hours"] or 0)
+        else:
+            mon_sat_total += float(row["drive_hours"] or 0)
+
+    if mon_sat_total == 0.0 and sun_total == 0.0:
+        raise ValueError(
+            f"Employee id={employee_id} has no drive hours in their timesheet "
+            f"for week {week_start} – {week_end}."
+        )
+
+    sun_status = "assumed_from_timesheet" if sun_total > 0 else "n/a"
+    full_note  = f"Assumed from timesheet (no travel PDF available). {note.strip()}"
+
+    existing = db.fetch_one(
+        conn,
+        "SELECT id FROM travel_hours WHERE weekly_approval_id = ? AND employee_id = ?",
+        (weekly_approval_id, employee_id),
+    )
+
+    if existing:
+        conn.execute(
+            """
+            UPDATE travel_hours
+            SET current_week_total        = ?,
+                current_sun_status        = ?,
+                current_sun_hours_assumed = ?,
+                current_sun_note          = ?
+            WHERE id = ?
+            """,
+            (mon_sat_total, sun_status, sun_total, full_note, existing["id"]),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO travel_hours
+                (weekly_approval_id, employee_id,
+                 current_week_total, current_sun_status,
+                 current_sun_hours_assumed, current_sun_note)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (weekly_approval_id, employee_id,
+             mon_sat_total, sun_status, sun_total, full_note),
+        )
+
+    db.log_audit(
+        conn,
+        action="assume_travel_from_timesheet",
+        entity_type="travel_hours",
+        entity_id=existing["id"] if existing else None,
+        new_value=(
+            f"employee_id={employee_id}, wa_id={weekly_approval_id}, "
+            f"mon_sat={mon_sat_total}, sun={sun_total}, status={sun_status!r}, "
+            f"note={note!r}"
+        ),
+    )
 
 
 def set_verified(

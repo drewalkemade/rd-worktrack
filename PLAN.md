@@ -17,13 +17,69 @@ All Phase 1 deliverables are done and 62/62 tests pass.
 
 ### Phase 2 — Complete (2026-04-14)
 
-All Phase 2 deliverables are done and 178/178 tests pass (5 skipped — non-per-diem receipt
-tests that require fixture timesheets with non-per-diem expenses).
+All Phase 2 deliverables are done.  Post-Phase-2 additions (still Phase 2 scope):
+
+- **Travel time reclassification** added to `reconciler.py`:
+  `_reclassify_travel()` — non-Sunday travel displaces OT → reg; Sunday travel displaces
+  DT → OT → reg.  `pending_next_pdf` Sunday hours are excluded from reclassification.
+  10 new reconciler tests.
+
+- **Paul Robertson (E8473)** added to seed data — billable, active Dec 2025 – Mar 2026.
+
+- **`testing/bulk_import.py`** — loads all 10 pay periods from `testing/` in one command.
+  Prefers `_DrewEdit.xlsx` over originals.  Derives week_ending from PDF filename.
+
+- **`assume_travel_from_timesheet()`** added to `weekly_verifier.py` — for weeks where
+  Centerline does not send a travel PDF; uses timesheet drive hours as travel.
+  5 new verifier tests.  Sets `current_sun_status = 'assumed_from_timesheet'` or `n/a`.
+
+- **Extraction log** added to `ImportResult.extraction_log` — per-employee detail of
+  what was parsed, shown in the Import page UI after each import.
+
+Total tests: 198 passed (5 skipped).
 
 ### Phase 3 — In Progress (started 2026-04-14)
 
-app.py, Dashboard, Import, and Weekly Verification pages are built and running.
-Remaining: Reconcile, Expenses, Employees, Reports pages.
+Phase 3 completed:
+- [x] `app.py` — KPI cards, DB init, sys.path guard
+- [x] `pages/1_Dashboard.py` — per-period status cards, receipt backlog, audit log
+- [x] `pages/2_Import.py` — payroll PDF, travel PDF, multi-file timesheet, import history, extraction log
+- [x] `pages/3_Weekly_Verification.py` — run verification, per-employee hours comparison, Mark Verified, Verify All, session-state fix
+- [x] `pages/4_Reconcile.py` — period overview, travel assumption UI, run reconciliation, variance table, approve/approve-all, invoice table with checksums, CSV export
+- [x] `pages/5_Expenses.py` — expense summary by employee, line item detail, mark receipt received, mark reimbursed
+- [x] `pages/6_Employees.py` — employee roster, alias detail, assignment history, add alias form
+- [x] `pages/7_Reports.py` — payroll export (cheque run + Sage 50 CSV), receipt backlog across all periods, period summary table
+
+Phase 3 notes:
+- Every page file needs `sys.path` guard: `_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent`
+- DB connection: `conn = db.get_connection()` / `finally: conn.close()` pattern throughout
+- `st.session_state` required for selectboxes that must survive `st.rerun()` (e.g. weekly approval selector)
+- Billing rates added to `config.py`: REG $72, OT1 $93.60, OT2 $122.40, Travel $72, Per Diem $70/day, HST 13%
+- Invoice item codes added to `config.py`: 005-1-2026-001 through 005-0-2025-102
+
+### Invoice Table Structure (from Invoice 2721, 2026-03-29)
+
+Per billable employee, 6 line types in this exact order:
+
+| Item No.       | Description                          | Unit Price |
+|----------------|--------------------------------------|------------|
+| 005-1-2026-001 | Centerline - Standard - Regular      | $72.00/hr  |
+| 005-1-2026-002 | Centerline - Standard - Overtime 1   | $93.60/hr  |
+| 005-1-2026-003 | Centerline - Standard - Overtime 2   | $122.40/hr |
+| 005-1-2026-100 | Centerline - Standard - Travel       | $72.00/hr  |
+| 005-0-2025-101 | Centerline Per Diem                  | $70.00/day |
+| 005-0-2025-102 | Centerline Expenses - [description]  | actual cost |
+
+- Rows with no quantity are shown blank (not omitted) — invoicing software shows all item codes
+- Per diem quantity = sum of days (quantity field in expense_items)
+- Expenses = one line per non-per-diem billable expense item (billing_status = ready_for_billing | billed)
+- Tax code = H (Ontario HST 13%) on all lines
+- Subtotal → HST → Total Amount Owing
+
+Phase 3 notes:
+- Every page file needs `sys.path` guard: `_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent`
+- DB connection: `conn = db.get_connection()` / `finally: conn.close()` pattern throughout
+- `st.session_state` required for selectboxes that must survive `st.rerun()` (e.g. weekly approval selector)
 
 Phase 2 deliverables:
 
@@ -1125,16 +1181,38 @@ Progress:
 Note: sys.path guard (`_PROJECT_ROOT = Path(__file__).resolve().parent.parent[.parent]`) is
 required in all page files so `payroll_app` is importable when streamlit runs pages as scripts.
 
-### Phase 4 — Template and operational polish
+### Phase 4 — UI Polish and operational improvements
 
-1. Improve timesheet template
-2. Add `Fuel` and `Other`
-3. Optional receipt image resize/compression workflow
-4. Add employee-facing template validation and submission checks
-5. Add richer reporting dashboards and profit analytics
-6. Add lateness/exception reporting hook if daily PDF extraction supports it cleanly
-7. Wire audit log to all state changes
-8. Add multi-customer hooks
+**UI: Workboard (n8n-style, priority)**
+Replace the current multi-page nav with a single workboard page per pay period.
+Linear node flow:
+1. Import Week 1 payroll PDF → log + table
+2. Import Week 1 travel PDF (or Assume from Timesheet) → log
+3. Verify Week 1 → per-employee comparison
+4. Import Week 2 payroll PDF → log + table
+5. Import Week 2 travel PDF (or Assume from Timesheet) → log
+6. Verify Week 2 → per-employee comparison
+7. Import Timesheets → log (corrected timesheet indicator + owner note)
+8. Reconcile → final hours, approve/approve-all
+9. Export → Sage 50 CSV + print page + Invoice Table CSV
+
+Rare-op provisions: UPDATE PDF re-import, corrected timesheet note.
+
+**UI: Employees page (st.data_editor rebuild)**
+Drew's explicit preference — the current expander + form is too cumbersome.
+Replace with two `st.data_editor` grids:
+- Grid 1: employee roster (editable inline)
+- Grid 2: alias table (one row per alias, editable inline)
+On Save: diff against DB, apply inserts/updates.
+
+**Other Phase 4 items:**
+1. Improve timesheet template — add `Fuel` and `Other` expense columns
+2. Optional receipt image resize/compression
+3. Employee-facing template validation and submission checks
+4. Richer reporting dashboards and profit analytics
+5. Lateness/exception reporting hook
+6. Full audit log coverage on all state changes
+7. Multi-customer hooks
 
 ---
 

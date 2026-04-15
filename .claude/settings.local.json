@@ -22,7 +22,18 @@
       "Bash(ls:*)",
       "Bash(wc -l /mnt/f/GitHub/rd-worktrack/payroll_app/app.py /mnt/f/GitHub/rd-worktrack/payroll_app/pages/*.py)",
       "Bash(/mnt/f/GitHub/rd-worktrack/.venv/bin/pip install:*)",
-      "Bash(.venv/bin/pytest payroll_app/tests/ -q --tb=short)"
+      "Bash(.venv/bin/pytest payroll_app/tests/ -q --tb=short)",
+      "Bash(.venv/bin/python3:*)",
+      "Bash(.venv/bin/pytest payroll_app/tests/test_importer.py::TestImportPayrollPdf::test_known_employees_imported payroll_app/tests/test_importer.py::TestImportPayrollPdf::test_skipped_employees_appear_in_warnings -q --tb=long)",
+      "Bash(.venv/bin/pytest payroll_app/tests/test_importer.py::TestImportPayrollPdf::test_idempotent_reimport payroll_app/tests/test_weekly_verifier.py::TestRunWeeklyVerification::test_total_employee_count payroll_app/tests/test_workbook_writers.py::TestProfitTrackerWriter::test_write_rawdata_week_dry_run -q --tb=short)",
+      "Bash(.venv/bin/python -m pytest payroll_app/tests/test_reconciler.py -v)",
+      "Bash(.venv/bin/python -m pytest payroll_app/tests/ -q)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(python -m pytest payroll_app/tests/ -q --tb=no)",
+      "Bash(pip3 show:*)",
+      "Bash(streamlit --version)",
+      "Bash(pip3 list:*)",
+      "Bash(xxd /mnt/f/GitHub/rd-worktrack/example/timesheet_20260329.csv)"
     ]
   }
 }
