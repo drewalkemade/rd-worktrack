@@ -33,7 +33,10 @@
       "Bash(pip3 show:*)",
       "Bash(streamlit --version)",
       "Bash(pip3 list:*)",
-      "Bash(xxd /mnt/f/GitHub/rd-worktrack/example/timesheet_20260329.csv)"
+      "Bash(xxd /mnt/f/GitHub/rd-worktrack/example/timesheet_20260329.csv)",
+      "Bash(npm --version)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

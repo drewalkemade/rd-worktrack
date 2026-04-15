@@ -181,6 +181,7 @@ _SEED_EMPLOYEES = [
         "assignment":     config.ASSIGNMENT_INTERNAL,
         "aliases": [
             ("display_name", "Matina Rahbar"),
+            ("sage50_name",  "Matina Rahbar Ranji"),   # full second last name used in Sage 50
         ],
     },
 ]

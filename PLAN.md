@@ -9,7 +9,7 @@ Repo: `C:\Users\RD Controls\Desktop\apps\streamlit\rd-worktrack`
 Backup plan file:
 - `/home/drew/.claude/plans/frolicking-forging-sphinx.md`
 
-**Current phase: Phase 3 — Streamlit UI (in progress)**
+**Current phase: Phase 4 — Workboard UI + polish (Phase 3 complete as of 2026-04-15)**
 
 ### Phase 1 — Complete (2026-04-14)
 
@@ -38,7 +38,7 @@ All Phase 2 deliverables are done.  Post-Phase-2 additions (still Phase 2 scope)
 
 Total tests: 198 passed (5 skipped).
 
-### Phase 3 — In Progress (started 2026-04-14)
+### Phase 3 — Complete (2026-04-15)
 
 Phase 3 completed:
 - [x] `app.py` — KPI cards, DB init, sys.path guard
@@ -56,6 +56,41 @@ Phase 3 notes:
 - `st.session_state` required for selectboxes that must survive `st.rerun()` (e.g. weekly approval selector)
 - Billing rates added to `config.py`: REG $72, OT1 $93.60, OT2 $122.40, Travel $72, Per Diem $70/day, HST 13%
 - Invoice item codes added to `config.py`: 005-1-2026-001 through 005-0-2025-102
+- Non-billable time (sick/vacation/holiday/nonbillable) added to `weekly_employee_verification` table via migration
+- `EmployeeVerification` dataclass extended with 4 new fields; `_sum_timesheet_hours_for_week()` updated
+- Sage 50 CSV export rewritten: generates from DB directly (no workbook dependency), UTF-16 LE encoding
+- `sage50_name` alias type introduced — used by Sage 50 CSV export; falls back to display_name
+- Travel name aliases added for Atkinson, Wiseman, and Renwick (was causing import skips)
+- `Rick Renwick` travel alias added (Centerline travel PDF uses "Rick", not "Richard")
+- "Danger Zone" DB clear button added to Dashboard (requires typed confirmation)
+
+### Phase 4 — Current (started 2026-04-15)
+
+Phase 4 scope:
+- [x] Workboard page: n8n-style single-page-per-pay-period linear node flow — `pages/0_Workboard.py`; replaces all 7 prior pages (archived with `_` prefix)
+  - Billing flow: employees → approved hours → travel → invoice values
+  - Payroll flow: week1 approved → week1 travel → week2 approved → week2 travel → timesheet → Sage 50 CSV → manual checklist
+  - Each node expands inline to show imported data in a table (columns match payroll_export / timesheet_export CSV layout)
+  - Owner does visual check in the table before advancing to next node
+- [x] Workboard page (`pages/0_Workboard.py`) — dark n8n-style canvas with 20 nodes, bezier connections, status badges; all 7 prior pages archived (`_` prefix); all detail panels wired to pipeline (import, verify, reconcile, invoice, export)
+- [x] Matina Rahbar Ranji — sage50_name alias added to seed data (all three name-variant employees now complete: Yousof, Florin, Matina)
+- [ ] Employees node: replace expander/form with `st.data_editor` grids (roster + alias table)
+- [ ] Verification tab: consolidated Time Log-style view (submitted + approved + final side by side)
+- [ ] Receipt image display polish
+- [ ] Audit log coverage improvements
+- [ ] Timesheet template rework (new "for accounting" section, verification macros) — deferred to later phase
+- [ ] Multi-customer hooks (foundation only)
+
+Phase 4 notes:
+- Workboard uses `st.session_state` for node selection (no URL navigation) — file upload state is preserved across node switches
+- Canvas is rendered as HTML/SVG inside `st.components.v1.html()` — dark background, dot grid, node status badges update from DB each rerun
+- Node selector is a styled `st.selectbox` below the canvas; selected node is highlighted in purple on the canvas
+- All 20 nodes have wired detail panels; DrewEdit XLSX export is a placeholder (Phase 5)
+- To run: `streamlit run payroll_app/app.py` from the project root (with `.venv` active)
+
+Phase 4 open items resolved:
+- Matina Rahbar's Sage 50 name: "Matina Rahbar Ranji" ✓
+- CSV import question: payroll_export_*.csv / timesheet_export_*.csv are display-format reference only — NOT import sources ✓
 
 ### Invoice Table Structure (from Invoice 2721, 2026-03-29)
 

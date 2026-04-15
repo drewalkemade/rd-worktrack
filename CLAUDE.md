@@ -1,8 +1,8 @@
 # R&D Controls Corp — Timesheet Ecosystem
 
 **Company:** R&D Controls Corp (co-owned by Drew Alkemade and Rick)
-**Project:** Full ecosystem rework — replacing the current manual payroll / billing / reimbursement workflow with a local Streamlit app
-**Repo:** `C:\Users\RD Controls\Desktop\apps\streamlit\rd-worktrack` (WSL: `/mnt/c/Users/RD Controls/Desktop/apps/streamlit/rd-worktrack`)
+**Project:** Full ecosystem rework — replacing the current manual payroll / billing / reimbursement workflow with a React + FastAPI app
+**Repo:** `F:\GitHub\rd-worktrack` (WSL: `/mnt/f/GitHub/rd-worktrack`)
 **Source of truth plan:** `PLAN.md` (in this repo)
 **Backup plan file:** `/home/drew/.claude/plans/frolicking-forging-sphinx.md`
 
@@ -104,8 +104,11 @@ The future app should support ingesting the original filenames while preserving 
 
 ```text
 payroll_app/
-├── app.py
+├── app.py                          # legacy Streamlit entry (archived; no longer primary)
 ├── config.py
+├── api/
+│   ├── __init__.py
+│   └── main.py                     # FastAPI backend (port 8000)
 ├── database/
 │   ├── db.py
 │   ├── schema.sql
@@ -124,14 +127,32 @@ payroll_app/
 │   ├── profit_tracker_writer.py
 │   ├── expense_exporter.py
 │   └── exporter.py
-└── pages/
-    ├── 1_Dashboard.py
-    ├── 2_Import.py
-    ├── 3_Weekly_Verification.py
-    ├── 4_Reconcile.py
-    ├── 5_Expenses.py
-    ├── 6_Employees.py
-    └── 7_Reports.py
+├── pages/                          # archived Streamlit pages (prefixed with _)
+│   ├── 0_Workboard.py
+│   ├── _1_Dashboard.py … _7_Reports.py
+└── frontend/                       # React + Vite (port 5173)
+    ├── src/
+    │   ├── main.jsx
+    │   ├── App.jsx                  # root: topbar + canvas + side panel
+    │   ├── canvas.jsx               # React Flow canvas (20 nodes, 22 edges)
+    │   ├── api.js                   # Axios client → FastAPI
+    │   ├── index.css
+    │   ├── nodes/WorkboardNode.jsx
+    │   └── panels/
+    │       ├── EmployeesPanel.jsx
+    │       └── TimesheetsPanel.jsx
+    └── package.json
+```
+
+**To run:**
+```bash
+# Terminal 1 — backend
+source .venv/bin/activate
+uvicorn payroll_app.api.main:app --reload --port 8000
+
+# Terminal 2 — frontend
+cd payroll_app/frontend && npm run dev
+# opens http://localhost:5173
 ```
 
 ---
@@ -236,8 +257,8 @@ Travel notes:
 
 - **Phase 1** ✓ DONE — schema, source-file ingestion, workbook validation gate, extractor rewrites, regression tests
 - **Phase 2** ✓ DONE — importer, weekly verifier, reconciler, payroll writer, expense exporter, receipt tracking; post-phase additions: travel reclassification, assume_travel_from_timesheet(), extraction log, Paul Robertson, bulk_import.py (198 tests total)
-- **Phase 3** ✓ DONE — all 7 Streamlit pages: Dashboard, Import, Weekly Verification, Reconcile (with invoice table + CSV export), Expenses, Employees, Reports (payroll export + receipt backlog)
-- **Phase 4** ← CURRENT — workboard UI (n8n-style single page per pay period), template improvements, richer reporting, receipt-image polish, audit coverage, multi-customer hooks
+- **Phase 3** ✓ DONE — all 7 Streamlit pages: Dashboard (+ Danger Zone DB clear), Import, Weekly Verification (sick/vacation/holiday/nonbillable columns), Reconcile (invoice table + CSV export), Expenses, Employees, Reports (payroll export + Sage 50 CSV); Sage 50 export rewritten from DB with UTF-16 encoding + sage50_name alias; travel aliases added for Atkinson/Wiseman/Renwick
+- **Phase 4** ← CURRENT — workboard UI complete (`0_Workboard.py`, replaces all 7 pages); all node detail panels wired to pipeline; Matina Rahbar Ranji sage50_name alias added; next: Employees page → st.data_editor grids, verification tab (Time Log-style), receipt polish, audit coverage
 
 The weekly verification workflow is not optional and should not be deferred behind cosmetic UI work.
 
@@ -261,14 +282,26 @@ The weekly verification workflow is not optional and should not be deferred behi
 
 ## Stack
 
+**Backend (Python)**
 ```text
 pdfplumber>=0.11.0
 openpyxl>=3.1.2
 pandas>=2.2.0
-streamlit
+fastapi
+uvicorn[standard]
+python-multipart
 rapidfuzz
 pytest
 sqlite3
 ```
+
+**Frontend (Node)**
+```text
+react + vite
+@xyflow/react   (React Flow v12 — node canvas)
+axios
+```
+
+Streamlit is archived — all 7 pages prefixed with `_` and no longer the primary UI.
 
 Use `PLAN.md` for the detailed workflow, schema direction, sequencing, and control requirements.
