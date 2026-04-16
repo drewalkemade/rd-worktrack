@@ -83,18 +83,21 @@ cd payroll_app/frontend && npm run dev
 ```
 
 Phase 4 completed:
-- [x] FastAPI backend (`api/main.py`) — employees CRUD + aliases, periods, node-states, timesheet import, week1/2-hours, expenses, payroll PDF import, travel PDF import, weekly verification, set-verified
+- [x] FastAPI backend (`api/main.py`) — employees CRUD + aliases, periods, node-states, timesheet import, week1/2-hours, expenses, payroll PDF import, travel PDF import, approved-hours display, travel-hours display, weekly verification, set-verified
 - [x] React canvas (`canvas.jsx`) — 20 nodes, 22 smoothstep edges, state-driven colors, MiniMap, Controls, node dragging, position preserved across panel opens
-- [x] `WorkboardNode.jsx` — colored header, badge, state icon, ▶ Open button, React Flow Handles; supports multiple named output handles (e.g. Timesheets → Wk 1 / Wk 2)
+- [x] `WorkboardNode.jsx` — colored header, badge, state icon, ▶ Open button, React Flow Handles; supports multiple named output handles (Timesheets → Wk 1 / Wk 2)
 - [x] `EmployeesPanel.jsx` — inline-edit grid (display_name, pdf_name, pdf_id, centerline_id, type, active), expandable alias sub-row with add/delete
-- [x] `TimesheetsPanel.jsx` — drag-and-drop XLSX upload, staged file list, import → Week 1 + Week 2 hours tables + Week 1 + Week 2 expense tables (category, currency, receipt status)
-- [x] `ApprovedHoursPanel.jsx` — payroll PDF drop + auto-import, travel PDF drop + auto-import, Run Verification button, verification table with Approved / Timesheet / Variance column groups (colour-coded), per-row ✓ Verify; `needs_review` rows require a note before verification; note persists under employee name; wired to w{n}_payroll_pdf, w{n}_travel_pdf, w{n}_approved_hours nodes for both weeks
-- [x] Resizable side panel — drag left edge to resize (380px–1400px); width persists while panel is open
+- [x] `TimesheetsPanel.jsx` — drag-and-drop XLSX upload, staged file list, import → Wk1 + Wk2 hours tables + Wk1 + Wk2 expense tables (category, currency, receipt status)
+- [x] `ApprovedHoursPanel.jsx` — ingestion only (like TimesheetsPanel); payroll PDF drop → approved hours table (weekly totals + expandable daily rows with clock-in/out); travel PDF drop → travel table (Sun–Sat columns + sun status); note directing to Reconcile for comparison work; wired to w{n}_payroll_pdf, w{n}_travel_pdf, w{n}_approved_hours for both weeks
+- [x] `customer_daily_hours` table — stores per-day approved hours from payroll PDF (day, date, clock-in, clock-out, total_hours, is_dbl_day); migration added to db.py; importer updated to populate on every payroll PDF import
+- [x] `_resolve_pdf_date()` helper in importer — converts PDF date strings ("Mar 23") to ISO dates using week_ending year, handles year boundary
+- [x] Resizable side panel — drag left edge to resize (380px–1400px)
 - [x] Vite polling watcher — `usePolling: true` in vite.config.js for WSL /mnt/f/ file watching
 - [x] Matina Rahbar Ranji — sage50_name alias added to seed data
 
 Phase 4 remaining:
-- [ ] Reconcile node — run reconciliation, variance table, approve per employee
+- [ ] Reconcile node — the heavy workflow node: run weekly verification, daily comparison (approved vs timesheet per employee per day), mismatch identification, correction note generation ("Centerline Approved 7.75hrs (6:15-14:30)"), correction log, DrewEdit re-import tracking, weekly reclassification validation, mark verified per employee
+- [ ] `reclassifier.py` — weekly classification engine (REG/OT/DBL) with all payroll rules: 40h threshold (32h holiday week), travel = always REG never counts toward threshold, Sunday work = DBL, Sunday travel = REG, holiday work = OT, cascade recalculation across the week
 - [ ] Invoice / Invoice Export nodes — invoice line items, CSV export
 - [ ] Receipts node — receipt upload, link to expense items, receipt backlog
 - [ ] Merge + export nodes — Sage 50 CSV, Summary CSV, DrewEdit XLSX
@@ -107,6 +110,52 @@ Phase 4 open items resolved:
 - Streamlit lag/canvas question: resolved by migrating to React ✓
 - Node dragging: positions preserved on panel open/close via functional setNodes update ✓
 - Vite HMR on WSL /mnt/f/: fixed with usePolling in vite.config.js ✓
+- Reconcile architecture: Approved Hours = ingestion only; Reconcile = all comparison/correction/reclassification work ✓
+- Approved hours PDF contains daily hours (clock-in/out per employee per day) — parser already extracted them, now stored in customer_daily_hours ✓
+- DrewEdit workflow: Drew physically corrects XLSX and re-saves as _DrewEdit, re-imports via Timesheets node; app identifies what to change + generates note text ✓
+- Weekly reclassification (REG/OT/DBL) must be done manually after DrewEdit — reclassifier.py will validate the re-imported result ✓
+
+## Reconcile Node — Detailed Design
+
+### Payroll classification rules (confirmed 2026-04-15)
+
+| Situation | Classification |
+|-----------|----------------|
+| Regular work day, first 40h qualifying | REG |
+| Regular work day, after 40h qualifying | OT |
+| Sunday work | DBL |
+| Sunday travel | REG |
+| Travel (any day) | REG — does NOT count toward 40h OT threshold |
+| Holiday (the day itself) | 8h HOLIDAY |
+| Work on a holiday | OT |
+| Holiday week threshold | 32h qualifying before OT (holiday contributes 8h) |
+
+### Source of truth rules
+
+- **Default:** Approved Hours (Centerline PDF) wins when there is a discrepancy
+- **Exception:** If Centerline missed a Sunday entirely and the employee confirms it was real work, the timesheet wins for that Sunday — recorded as explicit override with employee name
+
+### Correction workflow
+
+1. Reconcile panel shows employees with variances
+2. Expand employee → daily comparison: approved (clock-in/out/total) vs timesheet (classified hours) per day
+3. App highlights mismatched days, calculates the difference
+4. App generates note text: `"Centerline Approved 7.75hrs (6:15-14:30)"`
+5. Owner corrects the XLSX manually → saves as `_DrewEdit.xlsx`
+6. Owner re-uploads via Timesheets node (importer already prefers DrewEdit)
+7. Owner re-runs verification in Reconcile panel → variance clears
+8. Owner verifies employee with note
+
+### correction_log table (to be added)
+```
+employee_id, weekly_approval_id, work_date,
+approved_total_hours, timesheet_total_hours, difference,
+clock_in, clock_out, generated_note,
+correction_type,   -- 'approved_hours' | 'sunday_override'
+confirmed_with,    -- employee name (Sunday override only)
+status,            -- 'identified' | 'applied' | 'confirmed'
+identified_at, applied_at
+```
 
 ### Invoice Table Structure (from Invoice 2721, 2026-03-29)
 

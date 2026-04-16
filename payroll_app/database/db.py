@@ -74,6 +74,24 @@ def initialize_database(conn: sqlite3.Connection) -> None:
             # Column already exists — nothing to do.
             pass
 
+    # New tables added after initial schema — safe to run on existing databases.
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS customer_daily_hours (
+            id                 INTEGER PRIMARY KEY,
+            weekly_approval_id INTEGER NOT NULL REFERENCES weekly_approvals(id),
+            employee_id        INTEGER NOT NULL REFERENCES employees(id),
+            work_date          DATE NOT NULL,
+            day_name           TEXT NOT NULL,
+            clock_in           TEXT,
+            clock_out          TEXT,
+            total_hours        DECIMAL NOT NULL DEFAULT 0,
+            is_dbl_day         BOOLEAN NOT NULL DEFAULT 0,
+            source_file_id     INTEGER REFERENCES source_files(id),
+            UNIQUE(weekly_approval_id, employee_id, work_date)
+        );
+    """)
+    conn.commit()
+
 
 # ---------------------------------------------------------------------------
 # Source file registration

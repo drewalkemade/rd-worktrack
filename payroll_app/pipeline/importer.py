@@ -273,6 +273,38 @@ def _find_or_create_weekly_approval(
 # Employee resolution
 # ---------------------------------------------------------------------------
 
+def _resolve_pdf_date(date_str: str, week_ending: date) -> str | None:
+    """Convert a PDF date string like "Mar 23" to an ISO date "2026-03-23".
+
+    The PDF omits the year.  We try the week_ending year first; if the resulting
+    date is more than 30 days away from week_ending we try the prior year, which
+    handles January PDFs processed in a prior-December pay period.
+    """
+    if not date_str or not date_str.strip():
+        return None
+    try:
+        # "%b %d" handles "Mar 23", "Apr  7", etc.
+        parsed = date.fromisoformat(
+            f"{week_ending.year}-"
+            + date.strptime(date_str.strip(), "%b %d").strftime("%m-%d")
+        )
+    except ValueError:
+        try:
+            # Some PDFs use full month names: "March 23"
+            parsed = date.fromisoformat(
+                f"{week_ending.year}-"
+                + date.strptime(date_str.strip(), "%B %d").strftime("%m-%d")
+            )
+        except ValueError:
+            return None
+
+    # If >30 days from week_ending, the year is likely off — try prior year
+    if abs((parsed - week_ending).days) > 30:
+        parsed = parsed.replace(year=week_ending.year - 1)
+
+    return str(parsed)
+
+
 def _resolve_employee(
     conn: Any,
     name: str,
@@ -528,15 +560,55 @@ def import_payroll_pdf(
                 source_file_id,
             ),
         )
+
+        # Store daily rows — clock-in, clock-out, total hours, pay class per day.
+        # These power the day-level comparison in the Reconcile panel.
+        for day in emp_data.get("daily_rows", []):
+            # Resolve work_date: the PDF gives e.g. "Mar 23" — pair with week_ending year.
+            work_date_str = _resolve_pdf_date(day["work_date"], week_ending)
+            if work_date_str is None:
+                warnings.append(
+                    f"{pdf_name}: could not parse daily date {day['work_date']!r} — skipped"
+                )
+                continue
+            conn.execute(
+                """
+                INSERT INTO customer_daily_hours
+                    (weekly_approval_id, employee_id, work_date, day_name,
+                     clock_in, clock_out, total_hours, is_dbl_day, source_file_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(weekly_approval_id, employee_id, work_date) DO UPDATE SET
+                    day_name       = excluded.day_name,
+                    clock_in       = excluded.clock_in,
+                    clock_out      = excluded.clock_out,
+                    total_hours    = excluded.total_hours,
+                    is_dbl_day     = excluded.is_dbl_day,
+                    source_file_id = excluded.source_file_id
+                """,
+                (
+                    weekly_approval_id,
+                    employee_id,
+                    work_date_str,
+                    day["day_name"],
+                    day.get("clock_in") or None,
+                    day.get("clock_out") or None,
+                    day["total_hours"],
+                    1 if day["is_dbl_day"] else 0,
+                    source_file_id,
+                ),
+            )
+
         employee_count += 1
         # Fetch display name for the log
         emp_row = db.fetch_one(conn, "SELECT display_name FROM employees WHERE id = ?", (employee_id,))
         display = emp_row["display_name"] if emp_row else pdf_name
+        daily_count = len(emp_data.get("daily_rows", []))
         log_lines.append(
             f"  OK    {pdf_name} → {display}:"
             f"  REG={emp_data['reg_hours']:.2f}"
             f"  OT={emp_data['ot_hours']:.2f}"
             f"  DBL={emp_data['dbl_hours']:.2f}"
+            f"  ({daily_count} daily rows)"
         )
 
     # Build the period info for the header
