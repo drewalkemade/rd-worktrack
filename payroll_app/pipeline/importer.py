@@ -47,7 +47,7 @@ Unresolvable employees are never silently dropped — they appear in warnings.
 """
 
 import dataclasses
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -286,14 +286,14 @@ def _resolve_pdf_date(date_str: str, week_ending: date) -> str | None:
         # "%b %d" handles "Mar 23", "Apr  7", etc.
         parsed = date.fromisoformat(
             f"{week_ending.year}-"
-            + date.strptime(date_str.strip(), "%b %d").strftime("%m-%d")
+            + datetime.strptime(date_str.strip(), "%b %d").strftime("%m-%d")
         )
     except ValueError:
         try:
             # Some PDFs use full month names: "March 23"
             parsed = date.fromisoformat(
                 f"{week_ending.year}-"
-                + date.strptime(date_str.strip(), "%B %d").strftime("%m-%d")
+                + datetime.strptime(date_str.strip(), "%B %d").strftime("%m-%d")
             )
         except ValueError:
             return None

@@ -36,7 +36,9 @@
       "Bash(xxd /mnt/f/GitHub/rd-worktrack/example/timesheet_20260329.csv)",
       "Bash(npm --version)",
       "Bash(npm create:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(chmod +x *)",
+      "Bash(curl *)"
     ]
   }
 }

@@ -6,6 +6,7 @@
  */
 import { useState, useRef } from 'react'
 import { importTimesheets, getWeek1Hours, getWeek2Hours, getPeriodExpenses } from '../api'
+import { downloadCsv } from '../utils/csv'
 
 function fmt(n) {
   if (!n || n === 0) return <span className="zero">—</span>
@@ -147,6 +148,7 @@ export default function TimesheetsPanel({ periodId, onClose, onImportDone }) {
   const [week2Data,  setWeek2Data]  = useState(null)  // week2-hours response
   const [expenses,   setExpenses]   = useState(null)  // all expense_items for period
   const [dragOver,   setDragOver]   = useState(false)
+  const [showReimport, setShowReimport] = useState(false)  // toggle re-import section
   const fileInputRef = useRef()
 
   const addFiles = (incoming) => {
@@ -209,79 +211,149 @@ export default function TimesheetsPanel({ periodId, onClose, onImportDone }) {
     <>
       <div className="panel-header">
         <h2>📋 Timesheets</h2>
+        {(week1Data || week2Data) && (
+          <button className="btn btn-ghost" style={{ fontSize: 10, padding: '2px 8px' }}
+            onClick={() => {
+              const rows = [['Employee','Week','REG','OT1','OT2','Drive','Sick','Vacation','Holiday','NonBill']]
+              for (const d of [week1Data, week2Data].filter(Boolean)) {
+                const wk = d.week1_start ? 1 : 2
+                for (const r of d.rows || []) {
+                  rows.push([r.employee,wk,r.reg||0,r.ot1||0,r.ot2||0,r.drive||0,r.sick||0,r.vacation||0,r.holiday||0,r.nonbill||0])
+                }
+              }
+              downloadCsv(rows, 'debug_timesheets.csv')
+            }}>↓ Debug CSV</button>
+        )}
         <button className="close-btn" onClick={onClose}>×</button>
       </div>
 
       <div className="panel-body">
-        <p style={{ fontSize: 12, color: '#8b949e', marginBottom: 16, lineHeight: 1.6 }}>
-          Upload one or more biweekly employee timesheet XLSX files.
-          The importer reads each employee's daily hours and splits them into
-          <strong style={{ color: '#e2e8f0' }}> Week 1</strong> (Mon–Sun)
-          and <strong style={{ color: '#e2e8f0' }}>Week 2</strong> automatically by date.
-        </p>
 
-        {/* Drop zone */}
-        <div
-          className={`drop-zone ${dragOver ? 'drag-over' : ''}`}
-          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx"
-            multiple
-            style={{ display: 'none' }}
-            onChange={e => addFiles(e.target.files)}
-          />
-          <div style={{ fontSize: 28, marginBottom: 6 }}>📂</div>
-          <div>Drop XLSX files here or click to browse</div>
-          <div style={{ fontSize: 10, marginTop: 4, color: '#4b5563' }}>
-            Accepts multiple files — one per employee
-          </div>
-        </div>
-
-        {/* Staged file list */}
-        {files.length > 0 && (
+        {/* ── If data is already loaded, show it first ── */}
+        {(week1Data || week2Data) && !results && (
           <>
-            <div className="section-label">Staged files ({files.length})</div>
-            <div>
-              {files.map(f => (
-                <div key={f.name} className="file-chip">
-                  📄
-                  <span style={{ color: '#e2e8f0', flex: 1 }}>{f.name}</span>
-                  <span style={{ fontSize: 10, color: '#4b5563' }}>
-                    {(f.size / 1024).toFixed(0)} KB
-                  </span>
-                  <span
-                    style={{ color: '#ef4444', cursor: 'pointer', marginLeft: 4 }}
-                    onClick={() => removeFile(f.name)}
-                  >×</span>
-                </div>
-              ))}
+            {week1Data && (
+              <HoursTable
+                label="Week 1 Hours"
+                dateRange={`${week1Data.week1_start} → ${week1Data.week1_ending}`}
+                rows={week1Data.rows}
+              />
+            )}
+            {expenses && (
+              <ExpenseTable
+                label="Week 1 Expenses"
+                items={expenses.items.filter(i => i.week === 1)}
+              />
+            )}
+            {week2Data && week2Data.rows.length > 0 && (
+              <HoursTable
+                label="Week 2 Hours"
+                dateRange={`${week2Data.week2_start} → ${week2Data.week2_ending}`}
+                rows={week2Data.rows}
+              />
+            )}
+            {expenses && (
+              <ExpenseTable
+                label="Week 2 Expenses"
+                items={expenses.items.filter(i => i.week === 2)}
+              />
+            )}
+
+            {/* Re-import toggle */}
+            <div style={{ marginTop: 20, borderTop: '1px solid #21262d', paddingTop: 14 }}>
+              <button
+                className="btn btn-ghost"
+                style={{ fontSize: 12 }}
+                onClick={() => setShowReimport(r => !r)}
+              >
+                {showReimport ? '▾ Hide re-import' : '▸ Re-import / Replace Files'}
+              </button>
             </div>
           </>
         )}
 
-        {/* Import button */}
-        <div style={{ marginTop: 16, display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button
-            className="btn btn-primary"
-            onClick={handleImport}
-            disabled={importing || files.length === 0}
-          >
-            {importing ? '⏳ Importing…' : '▶  Import Timesheets'}
-          </button>
-          {files.length > 0 && (
-            <button className="btn btn-ghost" onClick={() => setFiles([])}>
-              Clear
-            </button>
-          )}
-        </div>
+        {/* ── Upload section — always shown on first load; toggleable after ── */}
+        {(!week1Data && !week2Data || showReimport || results) && (
+          <>
+            {(week1Data || week2Data) && (
+              <div style={{ fontSize: 11, color: '#f59e0b', marginBottom: 10, marginTop: 4 }}>
+                ⚠ Re-importing will replace existing timesheet data for any matched employees.
+              </div>
+            )}
 
-        {/* Import results */}
+            {!(week1Data || week2Data) && (
+              <p style={{ fontSize: 12, color: '#8b949e', marginBottom: 16, lineHeight: 1.6 }}>
+                Upload one or more biweekly employee timesheet XLSX files.
+                The importer reads each employee's daily hours and splits them into
+                <strong style={{ color: '#e2e8f0' }}> Week 1</strong> (Mon–Sun)
+                and <strong style={{ color: '#e2e8f0' }}>Week 2</strong> automatically by date.
+              </p>
+            )}
+
+            {/* Drop zone */}
+            <div
+              className={`drop-zone ${dragOver ? 'drag-over' : ''}`}
+              onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx"
+                multiple
+                style={{ display: 'none' }}
+                onChange={e => addFiles(e.target.files)}
+              />
+              <div style={{ fontSize: 28, marginBottom: 6 }}>📂</div>
+              <div>Drop XLSX files here or click to browse</div>
+              <div style={{ fontSize: 10, marginTop: 4, color: '#4b5563' }}>
+                Accepts multiple files — one per employee
+              </div>
+            </div>
+
+            {/* Staged file list */}
+            {files.length > 0 && (
+              <>
+                <div className="section-label">Staged files ({files.length})</div>
+                <div>
+                  {files.map(f => (
+                    <div key={f.name} className="file-chip">
+                      📄
+                      <span style={{ color: '#e2e8f0', flex: 1 }}>{f.name}</span>
+                      <span style={{ fontSize: 10, color: '#4b5563' }}>
+                        {(f.size / 1024).toFixed(0)} KB
+                      </span>
+                      <span
+                        style={{ color: '#ef4444', cursor: 'pointer', marginLeft: 4 }}
+                        onClick={() => removeFile(f.name)}
+                      >×</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* Import button */}
+            <div style={{ marginTop: 16, display: 'flex', gap: 10, alignItems: 'center' }}>
+              <button
+                className="btn btn-primary"
+                onClick={handleImport}
+                disabled={importing || files.length === 0}
+              >
+                {importing ? '⏳ Importing…' : '▶  Import Timesheets'}
+              </button>
+              {files.length > 0 && (
+                <button className="btn btn-ghost" onClick={() => setFiles([])}>
+                  Clear
+                </button>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── Import results (shown after any import) ── */}
         {results && !results.error && (
           <div style={{ marginTop: 16 }}>
             {results.files?.map(f => (
@@ -298,6 +370,34 @@ export default function TimesheetsPanel({ periodId, onClose, onImportDone }) {
                 ))}
               </div>
             ))}
+
+            {/* Show updated data after re-import */}
+            {week1Data && (
+              <HoursTable
+                label="Week 1 Hours"
+                dateRange={`${week1Data.week1_start} → ${week1Data.week1_ending}`}
+                rows={week1Data.rows}
+              />
+            )}
+            {expenses && (
+              <ExpenseTable
+                label="Week 1 Expenses"
+                items={expenses.items.filter(i => i.week === 1)}
+              />
+            )}
+            {week2Data && week2Data.rows.length > 0 && (
+              <HoursTable
+                label="Week 2 Hours"
+                dateRange={`${week2Data.week2_start} → ${week2Data.week2_ending}`}
+                rows={week2Data.rows}
+              />
+            )}
+            {expenses && (
+              <ExpenseTable
+                label="Week 2 Expenses"
+                items={expenses.items.filter(i => i.week === 2)}
+              />
+            )}
           </div>
         )}
 
@@ -305,37 +405,7 @@ export default function TimesheetsPanel({ periodId, onClose, onImportDone }) {
           <div className="msg error" style={{ marginTop: 12 }}>✗ {results.error}</div>
         )}
 
-        {/* Week 1 — hours then expenses */}
-        {week1Data && (
-          <HoursTable
-            label="Week 1 Hours"
-            dateRange={`${week1Data.week1_start} → ${week1Data.week1_ending}`}
-            rows={week1Data.rows}
-          />
-        )}
-        {expenses && (
-          <ExpenseTable
-            label="Week 1 Expenses"
-            items={expenses.items.filter(i => i.week === 1)}
-          />
-        )}
-
-        {/* Week 2 — hours then expenses */}
-        {week2Data && week2Data.rows.length > 0 && (
-          <HoursTable
-            label="Week 2 Hours"
-            dateRange={`${week2Data.week2_start} → ${week2Data.week2_ending}`}
-            rows={week2Data.rows}
-          />
-        )}
-        {expenses && (
-          <ExpenseTable
-            label="Week 2 Expenses"
-            items={expenses.items.filter(i => i.week === 2)}
-          />
-        )}
-
-        {/* Load existing if period selected but no import yet */}
+        {/* Load existing if period selected but no import yet and no data */}
         {!week1Data && !week2Data && periodId && !results && (
           <div style={{ marginTop: 20, textAlign: 'center' }}>
             <button className="btn btn-ghost" onClick={() => {

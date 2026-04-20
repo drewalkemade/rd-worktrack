@@ -8,23 +8,28 @@
  *   state       string   idle | partial | complete
  *   summary     string   short text shown in node body
  *   onOpen      fn       called when the node or ▶ button is clicked
+ *   infoOnly    bool     if true: no Open button, no click handler — visual reference only
  */
 import { Handle, Position } from '@xyflow/react'
 
-const STATE_ICON = { idle: '', partial: '◑', complete: '✓' }
+const STATE_ICON  = { idle: '', partial: '◑', complete: '✓' }
 const STATE_COLOR = { idle: '#8b949e', partial: '#f59e0b', complete: '#22c55e' }
 
 export default function WorkboardNode({ data, selected }) {
-  const { label, color, badge, state = 'idle', summary, onOpen,
-          hasInput = true, hasOutput = true, outputs = null } = data
+  const {
+    label, color, badge, state = 'idle', summary, onOpen,
+    hasInput = true, hasOutput = true, outputs = null,
+    infoOnly = false,
+  } = data
 
   const stateIcon  = STATE_ICON[state]  || ''
   const stateColor = STATE_COLOR[state] || '#8b949e'
 
   return (
     <div
-      className={`wb-node ${state} ${selected ? 'selected' : ''}`}
-      onClick={() => onOpen?.()}
+      className={`wb-node ${state} ${selected ? 'selected' : ''} ${infoOnly ? 'info-only' : ''}`}
+      onClick={() => !infoOnly && onOpen?.()}
+      style={infoOnly ? { cursor: 'default', opacity: 0.8 } : {}}
     >
       {hasInput && (
         <Handle type="target" position={Position.Left}
@@ -45,13 +50,15 @@ export default function WorkboardNode({ data, selected }) {
         </span>
       </div>
 
-      <div className="wb-node-body">
-        <div style={{ color: '#8b949e', marginBottom: summary ? 4 : 0 }}>
+      <div className="wb-node-body" style={infoOnly ? { paddingBottom: 6 } : {}}>
+        <div style={{ color: '#8b949e' }}>
           {summary || (state === 'idle' ? 'No data yet' : state === 'partial' ? 'In progress' : 'Complete')}
         </div>
-        <button className="play-btn" onClick={e => { e.stopPropagation(); onOpen?.() }}>
-          ▶ Open
-        </button>
+        {!infoOnly && (
+          <button className="play-btn" onClick={e => { e.stopPropagation(); onOpen?.() }}>
+            ▶ Open
+          </button>
+        )}
       </div>
 
       {/* Multiple named outputs (e.g. Timesheets → Wk 1 / Wk 2) */}

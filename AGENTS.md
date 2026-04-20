@@ -140,7 +140,14 @@ payroll_app/
     │   ├── nodes/WorkboardNode.jsx
     │   └── panels/
     │       ├── EmployeesPanel.jsx
-    │       └── TimesheetsPanel.jsx
+    │       ├── TimesheetsPanel.jsx
+    │       ├── ApprovedHoursPanel.jsx
+    │       ├── PayrollPdfPanel.jsx
+    │       ├── TravelPdfPanel.jsx
+    │       ├── ComparePanel.jsx
+    │       ├── ResolvePanel.jsx
+    │       ├── ReceiptsPanel.jsx
+    │       └── DebugPanel.jsx
     └── package.json
 ```
 
@@ -270,7 +277,7 @@ python testing/bulk_import.py --dry-run
 - **Phase 1** ✓ DONE — schema, source-file ingestion, workbook validation gate, extractor rewrites, regression tests
 - **Phase 2** ✓ DONE — importer, weekly verifier, reconciler, payroll writer, expense exporter, receipt tracking; + travel reclassification, assume_travel_from_timesheet(), extraction log, Paul Robertson, bulk_import.py (198 tests)
 - **Phase 3** ✓ DONE — all 7 Streamlit pages: Dashboard (+ Danger Zone DB clear), Import, Weekly Verification (sick/vacation/holiday/nonbillable columns), Reconcile (invoice table + CSV export), Expenses, Employees, Reports (payroll export + Sage 50 CSV); Sage 50 export rewritten from DB with UTF-16 encoding + sage50_name alias; travel aliases added for Atkinson/Wiseman/Renwick
-- **Phase 4** ← CURRENT — Streamlit deprecated; React + FastAPI workboard built; EmployeesPanel, TimesheetsPanel (Wk1/Wk2 hours + expenses), ApprovedHoursPanel (ingestion only — payroll PDF + travel PDF → display tables with daily clock-in/out rows); customer_daily_hours table added; reclassifier.py + Reconcile node next
+- **Phase 4** ← CURRENT — Streamlit deprecated; React + FastAPI workboard built. All UI nodes scaffolded. Nodes fully working: Employees, Timesheets, Approved Hours, Compare, Resolve, Verify, Receipts (per-item file drop + defer). Stub nodes: Invoice, Invoice Export, Merge, Modified Timesheets, Export (Sage50/Summary/DrewEdit). Key fixes: drive_hours included in daily total comparison; expense review flag clears once receipts attached/deferred; needs_review employees show ⚠ Variance badge in Verify but are not hard-blocked; Receipts filtered per week; canvas: receipts → verify edge. Remaining: reclassifier.py, backend export endpoints, DrewEdit writer, Merge/reconcile endpoint.
 
 The weekly verification workflow is not optional and should not be deferred behind cosmetic UI work.
 

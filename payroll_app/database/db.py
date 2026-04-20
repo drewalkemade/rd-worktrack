@@ -89,6 +89,25 @@ def initialize_database(conn: sqlite3.Connection) -> None:
             source_file_id     INTEGER REFERENCES source_files(id),
             UNIQUE(weekly_approval_id, employee_id, work_date)
         );
+
+        CREATE TABLE IF NOT EXISTS correction_log (
+            id                    INTEGER PRIMARY KEY,
+            employee_id           INTEGER NOT NULL REFERENCES employees(id),
+            weekly_approval_id    INTEGER NOT NULL REFERENCES weekly_approvals(id),
+            work_date             DATE NOT NULL,
+            approved_total_hours  DECIMAL,
+            timesheet_total_hours DECIMAL,
+            difference            DECIMAL,
+            clock_in              TEXT,
+            clock_out             TEXT,
+            generated_note        TEXT,
+            correction_type       TEXT NOT NULL DEFAULT 'approved_hours',
+            confirmed_with        TEXT,
+            status                TEXT NOT NULL DEFAULT 'identified',
+            identified_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+            applied_at            DATETIME,
+            UNIQUE(weekly_approval_id, employee_id, work_date)
+        );
     """)
     conn.commit()
 

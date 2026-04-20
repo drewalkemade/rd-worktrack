@@ -88,19 +88,36 @@ Phase 4 completed:
 - [x] `WorkboardNode.jsx` — colored header, badge, state icon, ▶ Open button, React Flow Handles; supports multiple named output handles (Timesheets → Wk 1 / Wk 2)
 - [x] `EmployeesPanel.jsx` — inline-edit grid (display_name, pdf_name, pdf_id, centerline_id, type, active), expandable alias sub-row with add/delete
 - [x] `TimesheetsPanel.jsx` — drag-and-drop XLSX upload, staged file list, import → Wk1 + Wk2 hours tables + Wk1 + Wk2 expense tables (category, currency, receipt status)
-- [x] `ApprovedHoursPanel.jsx` — ingestion only (like TimesheetsPanel); payroll PDF drop → approved hours table (weekly totals + expandable daily rows with clock-in/out); travel PDF drop → travel table (Sun–Sat columns + sun status); note directing to Reconcile for comparison work; wired to w{n}_payroll_pdf, w{n}_travel_pdf, w{n}_approved_hours for both weeks
+- [x] `ApprovedHoursPanel.jsx` — payroll PDF drop → approved hours table (weekly totals + expandable daily rows with clock-in/out); travel PDF drop → travel table (Sun–Sat columns + sun status)
 - [x] `customer_daily_hours` table — stores per-day approved hours from payroll PDF (day, date, clock-in, clock-out, total_hours, is_dbl_day); migration added to db.py; importer updated to populate on every payroll PDF import
 - [x] `_resolve_pdf_date()` helper in importer — converts PDF date strings ("Mar 23") to ISO dates using week_ending year, handles year boundary
 - [x] Resizable side panel — drag left edge to resize (380px–1400px)
 - [x] Vite polling watcher — `usePolling: true` in vite.config.js for WSL /mnt/f/ file watching
 - [x] Matina Rahbar Ranji — sage50_name alias added to seed data
+- [x] `ComparePanel.jsx` — run verification, day-level expandable rows, early verify for matching employees, directs needs_review to Resolve
+- [x] `ResolvePanel.jsx` — per-day adjudication buttons (Approved is correct / Timesheet is correct), Sunday-missing confirm-with-employee, decisions persisted to correction_log; breakdown shows reg + travel hours separately when drive_hours present
+- [x] `correction_log` table — tracks per-day adjudication decisions (approved_wins / timesheet_wins), confirmed_with, generated_note, status
+- [x] FastAPI startup event — `initialize_database()` runs on every uvicorn start; all IF NOT EXISTS migrations apply automatically
+- [x] **Verify node** (`VerifyPanel.jsx`) — auto-runs verification on open (silent); shows per-employee approved hours + variances; needs_review employees show ⚠ Variance badge but are NOT hard-blocked; owner Verify click is the sign-off; Verify All bulk button; allVerified success state
+- [x] **Receipts node** (`ReceiptsPanel.jsx`) — full rewrite: per-item drop zones (no global zone), individual file attach, Defer → next period button with optional note; filtered per week (w1 vs w2); deferred status non-blocking in Verify; `POST .../attach-receipt` + `POST .../defer` endpoints added
+- [x] `_get_expense_summary_for_week` — only flags needs_expense_review when non-per-diem expenses have `receipt_status = 'missing'`; clears automatically when receipts attached or deferred
+- [x] `_corrections_cover_all_variances` — includes `drive_hours` in daily total comparison so days where approved total = reg + drive don't show as false mismatches
+- [x] `get_day_comparison` endpoint — includes `drive_hours` in timesheet total; ResolvePanel shows breakdown `(6.00 reg + 4.00 travel)` when drive hours present
+- [x] Canvas edges — `w1/w2_receipts → w1/w2_verify` (was → invoice); Receipts is a gate before final verification
+- [x] `dev.sh` — fixed Ctrl+C race condition: kill whole process group + wait before printing "Done."
+- [x] **Stub nodes** — `InvoicePanel.jsx`, `MergePanel.jsx`, `ModifiedTimesheetsPanel.jsx`, `ExportPanel.jsx` (shared for sage50/summary/drewedit)
 
 Phase 4 remaining:
-- [ ] Reconcile node — the heavy workflow node: run weekly verification, daily comparison (approved vs timesheet per employee per day), mismatch identification, correction note generation ("Centerline Approved 7.75hrs (6:15-14:30)"), correction log, DrewEdit re-import tracking, weekly reclassification validation, mark verified per employee
-- [ ] `reclassifier.py` — weekly classification engine (REG/OT/DBL) with all payroll rules: 40h threshold (32h holiday week), travel = always REG never counts toward threshold, Sunday work = DBL, Sunday travel = REG, holiday work = OT, cascade recalculation across the week
-- [ ] Invoice / Invoice Export nodes — invoice line items, CSV export
-- [ ] Receipts node — receipt upload, link to expense items, receipt backlog
-- [ ] Merge + export nodes — Sage 50 CSV, Summary CSV, DrewEdit XLSX
+- [x] **Compare node** ✓
+- [x] **Resolve node** ✓
+- [x] **Verify node** ✓
+- [x] **Receipts node** ✓
+- [ ] `reclassifier.py` — weekly REG/OT/DBL classification engine (see Node Definitions)
+- [ ] **Invoice node** — invoice line items per employee per week (billing rates + HST)
+- [ ] **Invoice Export node** — invoice CSV / formatted output
+- [ ] **Merge node** — `POST /api/periods/{id}/reconcile` endpoint; combine Week 1 + Week 2 into biweekly payroll run
+- [ ] **Modified Timesheets node** — DrewEdit XLSX writer (`pipeline/drewedit_writer.py`)
+- [ ] **Export nodes** — backend endpoints for Sage 50 CSV, Summary CSV, DrewEdit XLSX bundle
 - [ ] Timesheet template rework — deferred to later phase
 - [ ] Multi-customer hooks — deferred
 
@@ -175,6 +192,323 @@ Per billable employee, 6 line types in this exact order:
 - Expenses = one line per non-per-diem billable expense item (billing_status = ready_for_billing | billed)
 - Tax code = H (Ontario HST 13%) on all lines
 - Subtotal → HST → Total Amount Owing
+
+---
+
+## Node Definitions — Phase 4 Workboard
+
+Each node below defines: purpose, what it shows, what actions are available, what "complete" means, and what must exist before the node is useful.
+
+---
+
+### Employees
+**Purpose:** Manage the employee roster and all name aliases used across source documents.
+
+**Shows:**
+- Active employee list: display_name, pdf_name, pdf_id, centerline_id, type (billable/internal), active flag
+- Expandable alias sub-row: all alias types (travel_name, sage50_name, receipt_name, etc.) with add/delete
+
+**Actions:**
+- Edit any employee field inline
+- Add / remove aliases
+- Deactivate employees
+
+**Complete when:** At least one active employee exists.
+
+**Dependencies:** None — seeded at install.
+
+---
+
+### Timesheets
+**Purpose:** Import biweekly employee timesheet XLSX files. Each file covers 14 days for one employee.
+
+**Shows:**
+- Week 1 hours table: Employee | REG | OT1 | OT2 | Drive | Sick | Vacation | Holiday | Non-Bill
+- Week 2 hours table (same columns)
+- Week 1 and Week 2 expense tables: date, category, description, amount, currency, receipt status
+- Re-import / Replace toggle (warned: will overwrite existing data for matched employees)
+
+**Actions:**
+- Drop XLSX files or click to browse (multi-file)
+- Import Timesheets → creates pay_period if none exists, creates timesheet_daily_hours rows
+- Re-import to replace existing data
+
+**Complete when:** At least one timesheet import exists for this period.
+
+**Dependencies:** Employees must exist (for name matching).
+
+---
+
+### Payroll PDF  *(one per week, Wk 1 and Wk 2)*
+**Purpose:** Read-only view of data extracted from the Centerline payroll approval PDF for this week.
+
+**Shows:**
+- Filename of the imported PDF (shown on the node body and in the panel header)
+- Per-employee: REG | OT | DBL (labor hours from PDF — no travel)
+- Expandable daily rows: day name, date, clock-in → clock-out, total hours, DBL flag
+
+**Actions:** None. Upload lives in the Approved Hours node.
+
+**Node body text:** Filename when loaded (e.g. `R&D_260322-xxxxx.pdf`), or "No data yet".
+
+**Complete when:** payroll_pdf_file is set on the weekly_approval record.
+
+**Dependencies:** None — can be imported independently.
+
+---
+
+### Travel PDF  *(one per week, Wk 1 and Wk 2)*
+**Purpose:** Read-only view of data extracted from the Centerline travel PDF for this week.
+
+**Shows:**
+- Filename of the imported travel PDF (shown on the node body and in the panel header)
+- Per-employee daily columns: Mon | Tue | Wed | Thu | Fri | Sat | Week Total
+- Sun column (raw, from prior week boundary): hours + attribution status
+- Sun status color codes: confirmed (green), pending PDF (amber), assumed from TS (purple)
+
+**Note on the Sun column:** The travel PDF is Sun–Sat. Sunday hours always belong to the prior Mon–Sun work week. The Sun column here is shown for reference only — it is already attributed to the prior week's total.
+
+**Actions:** None. Upload lives in the Approved Hours node.
+
+**Node body text:** Filename when loaded (e.g. `R&D_260322-Travel.pdf`), or "No data yet".
+
+**Complete when:** travel_pdf_file is set on the weekly_approval record.
+
+**Dependencies:** None.
+
+---
+
+### Approved Hours  *(one per week, Wk 1 and Wk 2)*
+**Purpose:** Import both source PDFs for the week and view the combined approved hours table.
+
+**Shows:**
+- Payroll PDF drop zone (auto-imports on drop; shows filename + replace button when loaded)
+- Travel PDF drop zone (same behavior)
+- Combined approved hours table: Employee | REG | OT | DBL | *Travel* (italic) | Total (REG+OT+DBL only)
+- Expandable daily rows: clock-in/out per day, DBL flag
+- Travel is shown italic to indicate it comes from a separate PDF and is not included in the labor total
+
+**Actions:**
+- Drop / replace payroll PDF → imports customer_hours + customer_daily_hours
+- Drop / replace travel PDF → imports travel_hours with Sunday attribution
+
+**Complete when:** customer_hours rows exist for this week (payroll PDF imported).
+
+**Dependencies:** Employees (for PDF name matching).
+
+---
+
+### Receipts  *(Wk 1 and Wk 2 — filtered per week by work_date)*
+**Purpose:** Track and attach receipts for all expense items that require them before verification.
+
+**Shows:**
+- Summary bar: total required, missing count, received count, deferred count
+- Per-employee grouped list; each item has its own drop zone and Defer button
+- "✓ All receipts accounted for" success state when nothing is missing
+
+**Actions:**
+- Drop or click any item's drop zone to attach a receipt file — filename does not need to match
+  - Saves file to `RECEIPT_DIR`, inserts into `expense_receipts`, sets `receipt_status = 'received'`
+- **Defer →** button: marks `receipt_status = 'deferred'`, optional reason note; deferred items do not block verification
+- `receipt_status` values: `missing` | `received` | `deferred` | `not_required`
+
+**Complete when:** No items have `receipt_status = 'missing'` (all received or deferred).
+**Partial when:** Some items still missing.
+**Idle when:** No receipt-required expense items for this week.
+
+**Effect on Verify:** `_get_expense_summary_for_week` only flags `needs_expense_review = True` when non-per-diem expenses have `receipt_status = 'missing'`. Received or deferred clears the flag automatically.
+
+**Canvas position:** Receipts → Verify (not Invoice). Receipts is a gate before sign-off.
+
+**Dependencies:** Timesheets (expense items come from timesheet import).
+
+---
+
+### Compare  *(one per week, Wk 1 and Wk 2)*
+**Purpose:** Surface who has mismatches between approved hours and timesheet, and exactly which day is different. This is a **read + verification node** — it identifies problems but does not fix them.
+
+**Shows:**
+- Per-employee comparison table: Approved (REG/OT/DBL/*Travel italic*) | Timesheet (REG/OT1/OT2/Drive) | Variance (ΔREG/ΔOT/ΔDBL) | PD | Sun status | Status
+- Row background: amber tint for needs_review, green tint for verified
+- **Expandable day rows** (click employee to expand): for each day in the week —
+  - Day name + date
+  - Approved: clock-in → clock-out, total hours (from customer_daily_hours)
+  - Timesheet: total submitted hours (sum of reg+ot1+ot2)
+  - Δ difference with color: amber if timesheet > approved, red if timesheet < approved
+  - ⚠ flag if Sunday exists in timesheet but is absent from approved hours (Sunday missing exception)
+- Travel column is italic in both header and cells — it comes from a separate PDF and is not part of the labor total
+
+**Actions:**
+- Run Verification → executes weekly_verifier, populates weekly_employee_verification
+- Re-run Verification → refreshes all rows
+- **Verify employee** (no variance): marks status = verified; no note required if numbers match
+- **Verify with note** (needs_review): requires a note before marking verified
+
+**What triggers needs_review status:**
+- Any variance between approved and timesheet weekly totals (ΔREG, ΔOT, or ΔDBL ≠ 0)
+- Sunday missing from approved hours but present in timesheet
+- Extra expense items that may need review (💰 flag)
+
+**Complete when:** All employees in weekly_employee_verification have status = verified.
+**Partial when:** Some verification rows exist but not all verified.
+**Idle when:** No verification rows (Run Verification not yet clicked).
+
+**Dependencies:** Approved Hours (payroll PDF imported), Timesheets (for comparison).
+
+---
+
+### Resolve  *(one per week, Wk 1 and Wk 2)*
+**Purpose:** Per-day source adjudication. For each mismatched day the owner selects which source is authoritative — Centerline approved hours or the employee timesheet. Decisions are persisted to `correction_log`. No XLSX editing happens here. The DrewEdit export node later reads these decisions and generates corrected files with notes already written in.
+
+**Core design principle:** No manual copy-paste. The owner makes a single decision per day; the system remembers it and applies it downstream.
+
+**Shows:**
+- Employees with unresolved variances (from `weekly_employee_verification` where `status = 'needs_review'`)
+- Per employee: each mismatched day expanded by default —
+  - Day | Approved (clock-in → clock-out, hours) | Timesheet hours | Δ
+  - Two action buttons: **"Approved is correct"** / **"Timesheet is correct"**
+  - If already resolved: which source won + when
+
+**Decision logic:**
+- **Approved is correct** — CL's hours are authoritative for that day. The DrewEdit export will update the employee's XLSX cell to match approved hours and add the note: `"Centerline Approved 8.00hrs (06:15-14:30)"`. Records `correction_type = 'approved_wins'`.
+- **Timesheet is correct** — Employee's hours stand. No XLSX cell change needed, but the decision is recorded so downstream totals use the timesheet value. Records `correction_type = 'timesheet_wins'`.
+
+**Sunday-missing exception:**
+- Detected when: timesheet has a Sunday row but `customer_daily_hours` has no row for that date
+- Treated as: "Timesheet is correct" with a required **"Confirmed with"** field (employee name)
+- Records `correction_type = 'timesheet_wins'`, `confirmed_with = <employee name>`, `status = 'confirmed'`
+- No XLSX edit needed — the employee's hours already reflect the correct value
+
+**correction_log table** (exists):
+```
+employee_id, weekly_approval_id, work_date,
+approved_total_hours, timesheet_total_hours, difference,
+clock_in, clock_out, generated_note,
+correction_type,   -- 'approved_wins' | 'timesheet_wins' | (legacy: 'sunday_override')
+confirmed_with,    -- required for timesheet_wins Sunday cases
+status,            -- 'resolved' once a decision is made
+identified_at, applied_at
+```
+
+**Complete when:** All mismatched days for all `needs_review` employees have a decision recorded in `correction_log`. Idle if no variances exist.
+
+**Dependencies:** Compare (mismatches identified via Run Verification).
+
+**Downstream:** DrewEdit export node reads `correction_log` decisions to generate corrected XLSX files. `reclassifier.py` reads decisions to recalculate weekly REG/OT/DBL totals.
+
+---
+
+### Verify  *(one per week, Wk 1 and Wk 2)*
+**Purpose:** Final per-employee sign-off. Owner confirms hours are correct and week is ready for invoicing.
+
+**Behavior:**
+- Auto-runs `run_weekly_verification` silently on open — no manual button needed
+- `needs_review` employees show a ⚠ Variance badge but are **not hard-blocked** — the owner's explicit "✓ Verify" click is the sign-off authority (matches original Excel workflow)
+- `needs_expense_review` flag clears automatically when all non-per-diem receipts are received or deferred
+- Verify All bulk button covers both pending and needs_review employees
+
+**Shows:**
+- X / N verified progress line
+- Per-employee card: Approved REG/OT/DBL/Travel, variance row (only when non-zero), timesheet extras (sick/vacation/holiday/non-bill)
+- ⚠ Variance badge for needs_review; 💰 Expense review note when receipt still missing
+- Green "✓ All employees verified" when complete
+
+**Key design decision — daily total comparison includes drive_hours:**
+The approved daily total from the payroll PDF represents all time worked (labor + travel combined).
+`_corrections_cover_all_variances` and `get_day_comparison` both compute timesheet total as
+`reg + ot1 + ot2 + drive_hours`. A day where the employee recorded 6 REG + 4 drive = 10 total
+correctly matches an approved total of 10 — no false mismatch.
+
+**Complete when:** All employees verified.
+
+**Dependencies:** Resolve (variances adjudicated), Receipts (non-per-diem items received or deferred).
+
+---
+
+### Invoice  *(one per week, Wk 1 and Wk 2)*
+**Purpose:** Build per-week invoice line items from verified hours and approved expenses.
+
+**Shows:**
+Per-employee invoice lines (6 types, fixed order):
+1. REG hours @ $72.00/hr  (item 005-1-2026-001)
+2. OT hours @ $93.60/hr   (item 005-1-2026-002)
+3. DBL hours @ $122.40/hr (item 005-1-2026-003)
+4. Travel hours @ $72.00/hr (item 005-1-2026-100)
+5. Per Diem @ $70.00/day  (item 005-0-2025-101)
+6. Expenses — one line per non-per-diem billable item (item 005-0-2025-102)
+
+Lines with zero quantity shown blank (not omitted). HST 13% on all lines.
+
+**Complete when:** All billable employees verified in Verify node.
+
+**Dependencies:** Verify (hours signed off), Receipts (non-per-diem expenses need receipts before billing).
+
+---
+
+### Invoice Export  *(one per week, Wk 1 and Wk 2)*
+**Purpose:** Export the week's invoice as a formatted file.
+
+**Actions:** Export CSV or formatted XLSX — format TBD.
+
+**Dependencies:** Invoice complete.
+
+---
+
+### Merge
+**Purpose:** Combine Week 1 + Week 2 into a single biweekly payroll run. Both weeks must be fully verified before merge is allowed.
+
+**Shows:** Week 1 + Week 2 summaries; blocking check status.
+
+**Actions:** Confirm merge → creates biweekly reconciliation record.
+
+**Complete when:** Both weeks verified and merge confirmed.
+
+**Dependencies:** Both weeks' Verify nodes complete.
+
+---
+
+### Modified Timesheets
+**Purpose:** Package corrected employee timesheets (DrewEdit XLSXs) for the period.
+
+**Actions:** Export per-employee DrewEdit XLSX, or all as a zip.
+
+**Dependencies:** Merge complete.
+
+---
+
+### Sage50 CSV / Summary CSV / DrewEdit XLSX  *(export nodes)*
+- **Sage50 CSV:** UTF-16 LE payroll journal entries for Sage 50 import
+- **Summary CSV:** Human-readable period summary (hours + billing per employee)
+- **DrewEdit XLSX:** All corrected timesheets packaged for archive
+
+**Dependencies:** Merge complete.
+
+---
+
+## reclassifier.py — Design
+
+The weekly reclassifier takes one employee's full week of daily hours and outputs correct REG/OT/DBL/Travel/Holiday classifications. Must run after every correction.
+
+**Inputs per employee:**
+- Daily rows: date, day_name, total_hours, drive_hours, holiday_flag
+- Week context: has_holiday (bool)
+
+**Classification pass (Monday → Sunday in order):**
+1. Sunday: work hours → DBL; drive_hours on Sunday → REG
+2. Holiday day: 8h → HOLIDAY; hours worked above 8h → OT
+3. Travel (drive_hours): all → REG; do NOT count toward OT threshold
+4. Regular work days: accumulate toward threshold (40h normal, 32h holiday week)
+   - At or below threshold: REG
+   - Above threshold: OT
+
+**Cascade rule:**
+Any correction to an earlier day may shift the threshold crossing point. The entire week must be reclassified in one pass from Monday → Sunday — no partial patching.
+
+**Output:** Updated REG/OT/DBL/Holiday/Travel weekly totals + per-day classification breakdown for audit.
+
+**Called from:** Resolve node (after decisions recorded), Verify node (final totals), DrewEdit export (pre-write validation).
+
+---
 
 Phase 3 notes:
 - Every page file needs `sys.path` guard: `_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent`

@@ -112,6 +112,98 @@ class VerificationSummary:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _corrections_cover_all_variances(
+    conn: Any,
+    weekly_approval_id: int,
+    employee_id: int,
+    week_start: date,
+    week_end: date,
+    pay_period_id: int,
+    has_timesheet: bool,
+) -> bool:
+    """Return True if every day-level variance for this employee/week has a
+    resolved correction_log entry, meaning the owner has explicitly adjudicated
+    every mismatch via the Resolve node.
+
+    Also returns True if there are no day-level mismatches at all (e.g. an
+    employee who appears in approved hours but had zero activity both sides).
+    """
+    # Approved daily hours for this employee this week
+    approved_rows = db.fetch_all(conn, """
+        SELECT work_date, total_hours
+        FROM customer_daily_hours
+        WHERE weekly_approval_id = ? AND employee_id = ?
+          AND work_date BETWEEN ? AND ?
+    """, (weekly_approval_id, employee_id, str(week_start), str(week_end)))
+
+    # Per-day travel hours from travel PDF (mon_hours–sat_hours + confirmed Sunday).
+    # Subtracted from approved total before comparing to timesheet labor.
+    travel_row = db.fetch_one(conn, """
+        SELECT mon_hours, tue_hours, wed_hours, thu_hours, fri_hours, sat_hours,
+               current_sun_hours_assumed, current_sun_status
+        FROM travel_hours
+        WHERE weekly_approval_id = ? AND employee_id = ?
+    """, (weekly_approval_id, employee_id))
+
+    travel_by_date: dict = {}
+    if travel_row:
+        _day_cols = [
+            ("mon_hours", 0), ("tue_hours", 1), ("wed_hours", 2),
+            ("thu_hours", 3), ("fri_hours", 4), ("sat_hours", 5),
+        ]
+        for col, offset in _day_cols:
+            d = str(week_start + timedelta(days=offset))
+            travel_by_date[d] = float(travel_row[col] or 0)
+        sun_status = travel_row["current_sun_status"] or "pending_next_pdf"
+        if sun_status in ("confirmed", "assumed_from_timesheet"):
+            travel_by_date[str(week_end)] = float(travel_row["current_sun_hours_assumed"] or 0)
+
+    # Timesheet daily labor hours only — drive_hours excluded because the approved
+    # total from the payroll PDF already includes travel (subtracted separately above).
+    ts_rows = db.fetch_all(conn, """
+        SELECT tdh.work_date,
+               COALESCE(tdh.reg_hours, 0) + COALESCE(tdh.ot1_hours, 0)
+               + COALESCE(tdh.ot2_hours, 0)
+               AS work_hours
+        FROM timesheet_daily_hours tdh
+        JOIN timesheet_imports ti ON ti.id = tdh.timesheet_import_id
+        WHERE ti.pay_period_id = ? AND ti.employee_id = ?
+          AND tdh.work_date BETWEEN ? AND ?
+    """, (pay_period_id, employee_id, str(week_start), str(week_end)))
+
+    ts_map       = {r["work_date"]: float(r["work_hours"] or 0) for r in ts_rows}
+    # approved_map: labor only (raw PDF total minus per-day travel)
+    approved_map = {
+        r["work_date"]: max(0.0, float(r["total_hours"] or 0) - travel_by_date.get(r["work_date"], 0.0))
+        for r in approved_rows
+    }
+
+    mismatched: set[str] = set()
+
+    # Approved days that differ from timesheet
+    for work_date, app_hrs in approved_map.items():
+        ts_hrs = ts_map.get(work_date, 0.0)
+        if abs(app_hrs - ts_hrs) > _HOUR_TOLERANCE:
+            mismatched.add(work_date)
+
+    # Timesheet-only days (not in approved) — only relevant when employee has a timesheet
+    if has_timesheet:
+        for work_date, ts_hrs in ts_map.items():
+            if work_date not in approved_map and ts_hrs > _HOUR_TOLERANCE:
+                mismatched.add(work_date)
+
+    if not mismatched:
+        return True
+
+    resolved_rows = db.fetch_all(conn, """
+        SELECT work_date FROM correction_log
+        WHERE weekly_approval_id = ? AND employee_id = ? AND status = 'resolved'
+    """, (weekly_approval_id, employee_id))
+    resolved_dates = {r["work_date"] for r in resolved_rows}
+
+    return mismatched.issubset(resolved_dates)
+
+
 def _week_date_range(week_ending: date) -> tuple[date, date]:
     """Return (week_start, week_end) for a Mon–Sun business week.
 
@@ -253,7 +345,7 @@ def _get_expense_summary_for_week(
     rows = db.fetch_all(
         conn,
         """
-        SELECT category, amount, requires_receipt
+        SELECT category, amount, requires_receipt, receipt_status
         FROM expense_items
         WHERE pay_period_id = ?
           AND employee_id = ?
@@ -271,7 +363,10 @@ def _get_expense_summary_for_week(
             # Treat each per-diem expense row as 1 day (amount is the per-diem rate)
             per_diem_total += 1.0
         elif row["amount"] and float(row["amount"]) > 0:
-            non_per_diem_categories.add(row["category"])
+            # Only flag if the receipt is still missing (not received or deferred)
+            status = row["receipt_status"] or "missing"
+            if status not in ("received", "deferred"):
+                non_per_diem_categories.add(row["category"])
 
     needs_review = len(non_per_diem_categories) > 0
     extra_note = (
@@ -461,6 +556,20 @@ def run_weekly_verification(
             reg_variance, ot_variance, dbl_variance,
             needs_exp_review, sun_status, has_timesheet,
         )
+
+        # If the only reason for needs_review is hour variances (not expense
+        # review or provisional Sunday), check whether the owner has resolved
+        # every mismatched day via the Resolve node.  If so, treat as pending.
+        if (
+            status == "needs_review"
+            and not needs_exp_review
+            and sun_status != "pending_next_pdf"
+        ):
+            if _corrections_cover_all_variances(
+                conn, weekly_approval_id, employee_id,
+                week_start, week_end, pay_period_id, has_timesheet,
+            ):
+                status = "pending"
 
         # --- Upsert verification row ---
         conn.execute(
